@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Job Tracker Pro — Quick Save",
+  "version": "0.2.0",
+  "description": "Save job postings to Job Tracker Pro in one click.",
+  "action": {
+    "default_title": "Save job",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+

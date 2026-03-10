@@ -1,0 +1,17 @@
+[
+  "aws",
+  "azure",
+  "gcp",
+  "digitalocean",
+  "heroku",
+  "firebase",
+  "vercel",
+  "netlify",
+  "cloudflare",
+  "kubernetes",
+  "docker",
+  "ecs",
+  "eks",
+  "aks"
+]
+

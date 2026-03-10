@@ -123,7 +123,7 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold">Tailor Resume</h2>
-          <p className="text-xs text-slate-400">Local, template-based tailoring (no API key).</p>
+          <p className="text-xs text-slate-400">Selective suggestions (quality > quantity).</p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -165,7 +165,7 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
           )}
 
           <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3">
-            <p className="text-xs text-slate-400 mb-2">Fast wins</p>
+            <p className="text-xs text-slate-400 mb-2">Key gaps / fast wins</p>
             <ul className="list-disc pl-5 space-y-1 text-sm">
               {result.fastWins.map((s, i) => (
                 <li key={i}>{s}</li>
@@ -205,7 +205,7 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
                 {exporting ? "Exporting…" : "Export tailored PDF (ATS-friendly)"}
               </button>
               <p className="mt-2 text-xs text-slate-500">
-                Exports the selected summary + accepted bullets + suggested skill order.
+                Exports: selected summary + accepted bullets + skills.
               </p>
             </div>
             <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3">
@@ -294,7 +294,7 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
                         </button>
                       </div>
                       <p className="text-xs text-slate-500">
-                        Tip: accept fewer bullets, but make them strong and specific.
+                        Accept only bullets you’d actually submit.
                       </p>
                     </div>
                   ) : (

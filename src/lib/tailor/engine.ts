@@ -49,7 +49,7 @@ export function buildTailor(job: JobParsed, resume: ResumeParsed): TailorResult 
   if (!job.skillsRequired.length && !job.skillsPreferred.length) fastWins.push("Paste the Requirements/Qualifications section for better extraction.");
 
   const topSkills = [...matchedReq, ...matchedPref].slice(0, 10);
-  const role = job.title || "Software Developer";
+  const role = sanitizeRole(job.title, job.cleaned) || "Software Developer";
   const stack = topSkills.slice(0, 6);
   const workType = inferWorkTypeFromResume(resume.cleaned);
   const tailoredSummaries = buildHumanSummary(role, stack, workType);
@@ -104,6 +104,48 @@ export function buildTailor(job: JobParsed, resume: ResumeParsed): TailorResult 
       resumeSkills: resume.skills,
     },
   };
+}
+
+function sanitizeRole(role: string | undefined, jobText: string) {
+  const r = (role || "").trim();
+  if (!r) return inferRoleFromJobText(jobText);
+
+  const lowered = r.toLowerCase();
+  const looksGeneric =
+    lowered.includes("indeed") ||
+    lowered.includes("job search") ||
+    lowered.includes("jobs in") ||
+    lowered.includes("hiring") ||
+    lowered.includes("search results");
+
+  if (!looksGeneric) return r.replace(/\s+\|\s+Indeed$/i, "").trim();
+
+  return inferRoleFromJobText(jobText) || r.replace(/\s+\|\s+Indeed$/i, "").trim();
+}
+
+function inferRoleFromJobText(jobText: string) {
+  const t = (jobText || "").replace(/\r\n/g, "\n");
+  const firstLines = t
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 80);
+
+  // Common pattern: "we're looking for a Software Developer who..."
+  const joined = firstLines.join(" ");
+  const m = joined.match(/\blooking for (?:an?|the)\s+([A-Z][A-Za-z/&+\- ]{2,50}?)(?:\s+who|\s+to|\s+at|\s+in)\b/);
+  if (m?.[1]) return m[1].trim();
+
+  // Headline-like line: contains Developer/Engineer/etc
+  const roleWords = ["developer", "engineer", "analyst", "designer", "manager", "architect", "administrator"];
+  for (const line of firstLines) {
+    const ll = line.toLowerCase();
+    if (roleWords.some((w) => ll.includes(w)) && line.length <= 80) {
+      return line.replace(/^now,?\s+we'?re\s+looking\s+for\s+(?:an?|the)\s+/i, "").trim();
+    }
+  }
+
+  return undefined;
 }
 
 function categorizeJob(

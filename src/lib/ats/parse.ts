@@ -10,6 +10,12 @@ const JOB_REQUIRED_HEADINGS = [
   "what you bring",
   "must have",
   "minimum qualifications",
+  "skills",
+  "what we're looking for",
+  "what we are looking for",
+  "what you have",
+  "required experience",
+  "you bring",
 ] as const;
 
 const JOB_PREFERRED_HEADINGS = [
@@ -18,26 +24,69 @@ const JOB_PREFERRED_HEADINGS = [
   "bonus",
   "assets",
   "preferred qualifications",
+  "nice-to-have",
+  "preferred experience",
+  "bonus points",
 ] as const;
 
 const JOB_RESP_HEADINGS = [
   "responsibilities",
+  "key responsibilities",
   "what you'll do",
   "what you will do",
   "role",
   "about the role",
   "you will",
+  "what you'll be doing",
+  "what you will be doing",
+  "what you'll work on",
+  "your mission",
 ] as const;
 
 function headingKey(line: string) {
-  const l = line.toLowerCase().replace(/[:\-–—]+$/g, "").trim();
+  const l = line
+    .toLowerCase()
+    .replace(/^\s*(#+\s*)/, "") // markdown headings
+    .replace(/[:\-–—]+$/g, "")
+    .trim();
   return l;
 }
+
+const REQUIRED_SET = new Set<string>(JOB_REQUIRED_HEADINGS as unknown as string[]);
+const PREFERRED_SET = new Set<string>(JOB_PREFERRED_HEADINGS as unknown as string[]);
+const RESP_SET = new Set<string>(JOB_RESP_HEADINGS as unknown as string[]);
 
 function isHeading(line: string) {
   const l = headingKey(line);
   if (l.length < 3 || l.length > 60) return false;
-  return /^[a-z0-9 '&/]+$/.test(l) && (line === line.toUpperCase() || /:$/.test(line));
+
+  // If it matches a known heading, treat it as a heading even without ":" or ALL CAPS.
+  if (REQUIRED_SET.has(l) || PREFERRED_SET.has(l) || RESP_SET.has(l)) return true;
+
+  const looksHeadingy =
+    /:$/.test(line.trim()) ||
+    line.trim() === line.trim().toUpperCase() ||
+    /^(#+\s*)/.test(line.trim());
+  return /^[a-z0-9 '&/]+$/.test(l) && looksHeadingy;
+}
+
+function stripBulletPrefix(line: string) {
+  return line
+    .replace(/^\s*[-*•]\s+/, "")
+    .replace(/^\s*\d+[.)]\s+/, "")
+    .trim();
+}
+
+function isBullet(line: string) {
+  return /^\s*([-*•]|\d+[.)])\s+/.test(line);
+}
+
+function classifyLooseLine(line: string) {
+  const t = line.toLowerCase();
+  if (/(must\s+have|required|minimum\s+qualifications)/.test(t)) return "required" as const;
+  if (/(nice\s+to\s+have|preferred|bonus|assets?)/.test(t)) return "preferred" as const;
+  if (/(responsibilit|you will|what you'll do|what you will do)/.test(t)) return "responsibilities" as const;
+  return "other" as const;
 }
 
 export function parseJob(raw: string, meta?: { title?: string; company?: string }): JobParsed {
@@ -59,18 +108,27 @@ export function parseJob(raw: string, meta?: { title?: string; company?: string 
       continue;
     }
 
-    const trimmed = line.replace(/^\-\s+/, "").trim();
+    const trimmed = stripBulletPrefix(line);
     if (!trimmed) continue;
 
     if (section === "required") requiredLines.push(trimmed);
     else if (section === "preferred") preferredLines.push(trimmed);
     else if (section === "responsibilities") responsibilities.push(trimmed);
+    else {
+      // If we're in "other" but the line looks like a bullet, try to classify.
+      if (isBullet(line)) {
+        const loose = classifyLooseLine(trimmed);
+        if (loose === "required") requiredLines.push(trimmed);
+        else if (loose === "preferred") preferredLines.push(trimmed);
+        else responsibilities.push(trimmed);
+      }
+    }
   }
 
   // fallback: if nothing extracted, treat bullet-ish lines as responsibilities
   if (requiredLines.length + preferredLines.length + responsibilities.length < 4) {
     for (const line of lines) {
-      if (line.startsWith("- ")) responsibilities.push(line.slice(2).trim());
+      if (isBullet(line)) responsibilities.push(stripBulletPrefix(line));
     }
   }
 

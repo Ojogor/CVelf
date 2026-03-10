@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseJob, parseResume } from "@/lib/ats/parse";
 import { scoreHybrid } from "@/lib/ats/score";
-import { extractSkills } from "@/lib/ats/skills";
+import { analyzeJobSignals } from "@/lib/ats/skills";
 
 export const runtime = "nodejs";
 
@@ -105,10 +105,15 @@ type Evidence = {
   requirementLines: number;
   responsibilities: number;
   domainSignals: number;
+  recognizedSkills: string[];
+  otherTechnicalTerms: string[];
+  domainTerms: string[];
+  softSkills: string[];
 };
 
 function computeAnalysisStatus(jobText: string, parsedJob: any, parsedResume: any): AnalysisStatus {
-  const detectedSkills = extractSkills(jobText);
+  const signals = analyzeJobSignals(jobText);
+  const detectedSkills = signals.recognizedSkills;
   const overlapSkills = detectedSkills.filter((s) => (parsedResume.skills || []).includes(s));
 
   const evidence: Evidence = {
@@ -118,17 +123,17 @@ function computeAnalysisStatus(jobText: string, parsedJob: any, parsedResume: an
     requirementLines: (parsedJob.requiredLines || []).length + (parsedJob.preferredLines || []).length,
     responsibilities: (parsedJob.responsibilities || []).length,
     domainSignals: countDomainSignals(jobText),
+    recognizedSkills: signals.recognizedSkills,
+    otherTechnicalTerms: signals.otherTechnicalTerms,
+    domainTerms: signals.domainTerms,
+    softSkills: signals.softSkills,
   };
 
-  // Tightened thresholds:
-  // Only show a numeric score when we have meaningful, structured evidence.
-  // (This prevents "47/100" when we effectively extracted nothing.)
+  // Main rule: no numeric score unless we extracted structured requirements.
+  // Responsibilities/length alone are NOT enough to claim a precise score.
   const hasStructuredReq =
-    evidence.requiredSkills + evidence.preferredSkills >= 4 ||
-    evidence.requirementLines >= 6 ||
-    (evidence.requirementLines >= 4 && (evidence.requiredSkills + evidence.preferredSkills) >= 2) ||
-    (evidence.responsibilities >= 6 && detectedSkills.length >= 3) ||
-    evidence.requiredSkills >= 3;
+    evidence.requiredSkills + evidence.preferredSkills >= 2 ||
+    evidence.requirementLines >= 4;
 
   const hasSomeSignals =
     detectedSkills.length >= 3 ||

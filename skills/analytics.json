@@ -1,0 +1,59 @@
+{
+  "analytics_tools": [
+    "power bi",
+    "tableau",
+    "looker",
+    "looker studio",
+    "mode",
+    "superset"
+  ],
+  "data_science": [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "matplotlib",
+    "seaborn"
+  ],
+  "ml_frameworks": [
+    "tensorflow",
+    "pytorch",
+    "keras",
+    "xgboost"
+  ],
+  "domain_terms": [
+    "frontend",
+    "front-end",
+    "backend",
+    "back-end",
+    "full stack",
+    "full-stack",
+    "user-facing",
+    "customer-facing",
+    "internal tools",
+    "saas",
+    "b2b",
+    "b2c",
+    "dashboards",
+    "reporting",
+    "workflows",
+    "data-rich",
+    "high-traffic"
+  ],
+  "soft_skills": [
+    "collaborate",
+    "collaboration",
+    "communicate",
+    "communication",
+    "mentor",
+    "mentoring",
+    "ownership",
+    "take ownership",
+    "leadership",
+    "stakeholders",
+    "cross-functional",
+    "team player",
+    "problem solving",
+    "critical thinking"
+  ]
+}
+

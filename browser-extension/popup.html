@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Save job</title>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div>
+          <div class="title">Quick Save</div>
+          <div class="sub">Send this page to Job Tracker Pro</div>
+        </div>
+        <a class="link" href="options.html" target="_blank" rel="noreferrer">Options</a>
+      </div>
+
+      <label class="row">
+        <input id="includeText" type="checkbox" checked />
+        <span>Include visible page text (recommended)</span>
+      </label>
+
+      <button id="saveThisBtn" class="btn primary">Save this job</button>
+      <button id="saveAllBtn" class="btn">Save all jobs on this page</button>
+      <div id="status" class="status"></div>
+
+      <div class="hint">
+        If saving fails on LinkedIn/Indeed, open Options and paste the Requirements section into the app for best results.
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
+

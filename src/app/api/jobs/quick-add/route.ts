@@ -7,6 +7,8 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+export const runtime = "nodejs";
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -18,7 +20,7 @@ export async function POST(request: NextRequest) {
 
     const created = [];
     for (const job of jobs) {
-      const { title, company, url, platform, description, status = "pending" } = job || {};
+      const { title, company, url, platform, description, status = "interested" } = job || {};
       const createdJob = await prisma.job.create({
         data: {
           title: title?.trim() || "Untitled",
@@ -26,7 +28,7 @@ export async function POST(request: NextRequest) {
           url: url?.trim() || null,
           platform: platform?.trim() || null,
           description: description?.trim() || null,
-          status,
+          status: (typeof status === "string" && status.trim()) ? status.trim() : "interested",
         },
       });
       created.push(createdJob);
@@ -37,7 +39,11 @@ export async function POST(request: NextRequest) {
       { status: 201, headers: CORS_HEADERS }
     );
   } catch (e) {
-    return NextResponse.json({ error: "Failed to save job(s)" }, { status: 500, headers: CORS_HEADERS });
+    const message = e instanceof Error ? e.message : "Unknown error";
+    return NextResponse.json(
+      { error: "Failed to save job(s)", detail: message },
+      { status: 500, headers: CORS_HEADERS }
+    );
   }
 }
 

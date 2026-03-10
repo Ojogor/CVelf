@@ -8,7 +8,18 @@ type ScoreApiResponse =
   | {
       analysis: {
         status: "full";
-        evidence: any;
+        evidence: {
+          jobTextLength: number;
+          requiredSkills: number;
+          preferredSkills: number;
+          requirementLines: number;
+          responsibilities: number;
+          domainSignals: number;
+          recognizedSkills: string[];
+          otherTechnicalTerms: string[];
+          domainTerms: string[];
+          softSkills: string[];
+        };
       };
       result: {
         overallScore: number;
@@ -41,7 +52,18 @@ type ScoreApiResponse =
         detectedSkills: string[];
         overlapSkills: string[];
         preliminaryFit: "Good" | "Maybe" | "Unclear";
-        evidence: any;
+        evidence: {
+          jobTextLength: number;
+          requiredSkills: number;
+          preferredSkills: number;
+          requirementLines: number;
+          responsibilities: number;
+          domainSignals: number;
+          recognizedSkills: string[];
+          otherTechnicalTerms: string[];
+          domainTerms: string[];
+          softSkills: string[];
+        };
       };
       extracted: {
         detectedSkills: string[];
@@ -54,7 +76,18 @@ type ScoreApiResponse =
         status: "insufficient";
         note: string;
         detectedSkills: string[];
-        evidence: any;
+        evidence: {
+          jobTextLength: number;
+          requiredSkills: number;
+          preferredSkills: number;
+          requirementLines: number;
+          responsibilities: number;
+          domainSignals: number;
+          recognizedSkills: string[];
+          otherTechnicalTerms: string[];
+          domainTerms: string[];
+          softSkills: string[];
+        };
       };
       extracted: {
         detectedSkills: string[];
@@ -134,7 +167,7 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold">Job Intelligence</h2>
-          <p className="text-xs text-slate-400">“Should I apply?” + what to fix first.</p>
+          <p className="text-xs text-slate-400">Conservative analysis based on extracted evidence.</p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -170,9 +203,8 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
       {data?.analysis.status === "insufficient" && (
         <div className="space-y-3">
           <div className="rounded-lg border border-slate-700/50 bg-slate-800/20 p-3">
-            <p className="text-xs text-slate-400 mb-1">Analysis status</p>
-            <p className="text-lg font-semibold">Insufficient job detail</p>
-            <p className="text-sm text-slate-300 mt-2">{data.analysis.note}</p>
+            <p className="text-sm font-semibold">Insufficient job detail</p>
+            <p className="text-xs text-slate-400 mt-1">{data.analysis.note}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -181,11 +213,51 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
               >
                 Paste Requirements Section
               </button>
-              <p className="text-xs text-slate-500 self-center">
-                You can still save and review this job manually.
-              </p>
             </div>
           </div>
+
+          {(data.analysis.evidence.recognizedSkills.length > 0 ||
+            data.analysis.evidence.otherTechnicalTerms.length > 0) && (
+            <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3 space-y-2">
+              <p className="text-xs text-slate-400">Signals we could see (not enough for a score):</p>
+              {data.analysis.evidence.recognizedSkills.length > 0 && (
+                <div>
+                  <p className="text-[11px] text-slate-400 mb-1">Recognized technical skills</p>
+                  <div className="flex flex-wrap gap-2">
+                    {data.analysis.evidence.recognizedSkills.slice(0, 18).map((s) => (
+                      <span
+                        key={s}
+                        className="text-xs px-2 py-0.5 rounded bg-slate-700/60 border border-slate-600 text-slate-100"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {data.analysis.evidence.otherTechnicalTerms.length > 0 && (
+                <div>
+                  <p className="text-[11px] text-slate-400 mb-1">Other detected technical terms</p>
+                  <div className="flex flex-wrap gap-2">
+                    {data.analysis.evidence.otherTechnicalTerms.slice(0, 18).map((s) => (
+                      <span
+                        key={s}
+                        className="text-xs px-2 py-0.5 rounded bg-slate-800/70 border border-slate-700 text-slate-200"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(data.analysis.evidence.domainTerms.length > 0 ||
+                data.analysis.evidence.softSkills.length > 0) && (
+                <p className="text-[11px] text-slate-500 mt-1">
+                  We ignore vague domain/soft-skill phrases for strict scoring to avoid overclaiming.
+                </p>
+              )}
+            </div>
+          )}
 
           {pasteOpen && (
             <div className="rounded-lg border border-slate-700/50 bg-slate-900/30 p-3 space-y-2">
@@ -224,9 +296,8 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
       {data?.analysis.status === "partial" && (
         <div className="space-y-3">
           <div className="rounded-lg border border-sky-700/40 bg-sky-950/15 p-3">
-            <p className="text-xs text-slate-400 mb-1">Analysis status</p>
-            <p className="text-lg font-semibold">Partial analysis (limited confidence)</p>
-            <p className="text-sm text-slate-300 mt-2">{data.analysis.note}</p>
+            <p className="text-sm font-semibold">Partial analysis</p>
+            <p className="text-xs text-slate-400 mt-1">{data.analysis.note}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="text-xs px-2 py-0.5 rounded bg-slate-800/60 border border-slate-700/50 text-slate-200">
                 Preliminary fit: {data.analysis.preliminaryFit}
@@ -243,7 +314,7 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
 
           {data.analysis.detectedSkills?.length > 0 && (
             <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3">
-              <p className="text-xs text-slate-400 mb-2">Detected technical signals</p>
+              <p className="text-xs text-slate-400 mb-2">Detected skills</p>
               <div className="flex flex-wrap gap-2">
                 {data.analysis.detectedSkills.slice(0, 16).map((s) => (
                   <span key={s} className="text-xs px-2 py-0.5 rounded bg-slate-700/60 text-slate-200">
@@ -253,9 +324,48 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
               </div>
               {data.analysis.overlapSkills?.length > 0 && (
                 <p className="text-xs text-slate-500 mt-2">
-                  Possible overlap: <span className="text-slate-300">{data.analysis.overlapSkills.slice(0, 10).join(", ")}</span>
+                  Overlap: <span className="text-slate-300">{data.analysis.overlapSkills.slice(0, 10).join(", ")}</span>
                 </p>
               )}
+            </div>
+          )}
+
+          {(data.analysis.evidence.otherTechnicalTerms.length > 0 ||
+            data.analysis.evidence.domainTerms.length > 0) && (
+            <div className="rounded-lg bg-slate-900/40 border border-slate-700/50 p-3 space-y-2">
+              {data.analysis.evidence.otherTechnicalTerms.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-400 mb-1">Other detected technical terms (not counted as core skills)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {data.analysis.evidence.otherTechnicalTerms.slice(0, 16).map((s) => (
+                      <span
+                        key={s}
+                        className="text-xs px-2 py-0.5 rounded bg-slate-800/70 border border-slate-700 text-slate-200"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {data.analysis.evidence.domainTerms.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-400 mb-1">Domain / context signals</p>
+                  <div className="flex flex-wrap gap-2">
+                    {data.analysis.evidence.domainTerms.slice(0, 12).map((s) => (
+                      <span
+                        key={s}
+                        className="text-xs px-2 py-0.5 rounded bg-slate-900/70 border border-slate-700 text-slate-200"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-[11px] text-slate-500">
+                Low-confidence / culture-only phrases are shown for context but excluded from strict scoring.
+              </p>
             </div>
           )}
 
@@ -291,11 +401,9 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
             </div>
           )}
 
-          <div className="rounded-lg bg-slate-800/20 border border-slate-700/50 p-3">
-            <p className="text-xs text-slate-400">
-              No precise score shown because the posting did not include clear structured requirements.
-            </p>
-          </div>
+          <p className="text-xs text-slate-500">
+            Tip: paste the Requirements/Qualifications section to unlock a full score.
+          </p>
         </div>
       )}
 
@@ -361,6 +469,44 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
               ))}
             </ul>
           </div>
+
+          {(data.analysis.evidence.recognizedSkills.length > 0 ||
+            data.analysis.evidence.otherTechnicalTerms.length > 0 ||
+            data.analysis.evidence.domainTerms.length > 0) && (
+            <div className="rounded-lg bg-slate-900/40 border border-slate-700/50 p-3 space-y-2">
+              <p className="text-xs text-slate-400 mb-1">How we interpreted this posting</p>
+              {data.analysis.evidence.recognizedSkills.length > 0 && (
+                <p className="text-[11px] text-slate-300">
+                  Recognized technical skills used for scoring:{" "}
+                  <span className="text-slate-100">
+                    {data.analysis.evidence.recognizedSkills.slice(0, 18).join(", ")}
+                  </span>
+                  .
+                </p>
+              )}
+              {data.analysis.evidence.otherTechnicalTerms.length > 0 && (
+                <p className="text-[11px] text-slate-300">
+                  Other detected technical terms (not all scored):{" "}
+                  <span className="text-slate-100">
+                    {data.analysis.evidence.otherTechnicalTerms.slice(0, 18).join(", ")}
+                  </span>
+                  .
+                </p>
+              )}
+              {data.analysis.evidence.domainTerms.length > 0 && (
+                <p className="text-[11px] text-slate-300">
+                  Domain/context signals:{" "}
+                  <span className="text-slate-100">
+                    {data.analysis.evidence.domainTerms.slice(0, 12).join(", ")}
+                  </span>
+                  .
+                </p>
+              )}
+              <p className="text-[11px] text-slate-500">
+                The score only uses high/medium-confidence technical signals; vague culture language is ignored so the match stays honest.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

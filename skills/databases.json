@@ -1,0 +1,15 @@
+[
+  "postgresql",
+  "mysql",
+  "mariadb",
+  "sqlite",
+  "sql server",
+  "oracle",
+  "mongodb",
+  "redis",
+  "dynamodb",
+  "snowflake",
+  "bigquery",
+  "redshift"
+]
+
