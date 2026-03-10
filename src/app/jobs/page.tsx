@@ -9,24 +9,19 @@ import type { Job } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-const STATUS_ORDER = [
-  "pending",
-  "in_progress",
-  "applied",
-  "interviewing",
-  "offer",
-  "rejected",
+const COLUMNS = [
+  { key: "interested", label: "Interested" },
+  { key: "applied", label: "Applied" },
+  { key: "interview", label: "Interview" },
+  { key: "offer", label: "Offer" },
+  { key: "rejected", label: "Rejected" },
 ] as const;
-type JobStatus = (typeof STATUS_ORDER)[number];
-
-function prettyStatus(s: string) {
-  return s.replaceAll("_", " ");
-}
+type JobStatus = (typeof COLUMNS)[number]["key"];
 
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeStatus, setActiveStatus] = useState<JobStatus>("pending");
+  const [activeStatus, setActiveStatus] = useState<JobStatus>("interested");
   const [q, setQ] = useState("");
   const [platform, setPlatform] = useState("all");
   const [company, setCompany] = useState("");
@@ -56,13 +51,6 @@ export default function JobsPage() {
     return ["all", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [jobs]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const s of STATUS_ORDER) c[s] = 0;
-    for (const j of jobs) c[j.status] = (c[j.status] || 0) + 1;
-    return c as Record<JobStatus, number>;
-  }, [jobs]);
-
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
     const cc = company.trim().toLowerCase();
@@ -82,7 +70,7 @@ export default function JobsPage() {
       if (ad !== bd) return ad - bd;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [jobs, activeStatus, q, platform, company]);
+  }, [jobs, q, platform, company]);
 
   async function moveJobToStatus(jobId: string, newStatus: JobStatus) {
     setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: newStatus } : j)));
@@ -100,7 +88,7 @@ export default function JobsPage() {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Jobs</h1>
+        <h1 className="text-2xl font-bold">Saved Jobs</h1>
         <Link
           href="/jobs/new"
           className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition"
@@ -111,18 +99,19 @@ export default function JobsPage() {
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-slate-700/60">
-        {STATUS_ORDER.map((status) => {
-          const active = status === activeStatus;
+        {COLUMNS.map((t) => {
+          const active = t.key === activeStatus;
+          const count = jobs.filter((j) => j.status === t.key).length;
           return (
             <button
-              key={status}
+              key={t.key}
               type="button"
-              onClick={() => setActiveStatus(status)}
+              onClick={() => setActiveStatus(t.key)}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
                 const jobId = e.dataTransfer.getData("text/jobId");
-                if (jobId) moveJobToStatus(jobId, status);
+                if (jobId) moveJobToStatus(jobId, t.key);
               }}
               className={[
                 "px-4 py-2 rounded-t-lg text-sm font-medium transition",
@@ -132,14 +121,14 @@ export default function JobsPage() {
                   : "bg-slate-800/30 border-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-800/60",
               ].join(" ")}
             >
-              <span className="capitalize">{prettyStatus(status)}</span>
+              <span>{t.label}</span>
               <span
                 className={[
                   "ml-2 text-xs px-2 py-0.5 rounded-full",
                   active ? "bg-blue-600 text-white" : "bg-slate-700/60 text-slate-300",
                 ].join(" ")}
               >
-                {counts[status] ?? 0}
+                {count}
               </span>
             </button>
           );
@@ -184,7 +173,7 @@ export default function JobsPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
           <p className="text-sm text-slate-400">
-            {loading ? "Loading…" : `${filtered.length} job(s) in ${prettyStatus(activeStatus)}`}
+            {loading ? "Loading…" : `${filtered.length} job(s)`}
           </p>
           <button
             type="button"
@@ -200,7 +189,15 @@ export default function JobsPage() {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div
+        className="space-y-2"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const jobId = e.dataTransfer.getData("text/jobId");
+          if (jobId) moveJobToStatus(jobId, activeStatus);
+        }}
+      >
         {filtered.map((job) => (
           <JobCard
             key={job.id}
@@ -215,7 +212,7 @@ export default function JobsPage() {
         ))}
         {!loading && filtered.length === 0 && (
           <div className="rounded-xl border-2 border-dashed border-slate-700 p-10 text-center text-slate-500">
-            No jobs found for this tab + filters.
+            No jobs found in this tab.
           </div>
         )}
       </div>

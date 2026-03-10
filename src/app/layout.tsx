@@ -24,13 +24,13 @@ export default function RootLayout({
                 Dashboard
               </a>
               <a href="/jobs" className="hover:text-white transition">
-                Jobs
+                Saved Jobs
               </a>
               <a href="/resumes" className="hover:text-white transition">
-                Resumes
+                Resume
               </a>
-              <a href="/stats" className="hover:text-white transition">
-                Statistics
+              <a href="/applications" className="hover:text-white transition">
+                Applications
               </a>
             </nav>
           </div>

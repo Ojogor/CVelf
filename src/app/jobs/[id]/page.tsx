@@ -8,6 +8,7 @@ import { FormattedText } from "@/components/FormattedText";
 import { JobEditorPanel } from "@/components/JobEditorPanel";
 import { JobIntelligence } from "@/components/JobIntelligence";
 import { ResumeTailor } from "@/components/ResumeTailor";
+import { AddApplicationRecord } from "@/components/AddApplicationRecord";
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
@@ -60,6 +61,8 @@ export default function JobDetailPage() {
         <JobIntelligence jobId={job.id} />
         <ResumeTailor jobId={job.id} />
       </div>
+
+      <AddApplicationRecord jobId={job.id} />
 
       <JobEditorPanel job={job} onUpdated={setJob} />
 

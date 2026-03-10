@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, Trash2 } from "lucide-react";
+import { ExternalLink, GripVertical, Trash2 } from "lucide-react";
 import type { Job } from "@prisma/client";
 import { StatusSelect } from "@/components/StatusSelect";
 import { useState } from "react";
@@ -42,18 +42,34 @@ export function JobCard({
   return (
     <div
       className="p-3 rounded-lg bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/30 hover:border-slate-600 transition"
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData("text/jobId", job.id);
-        e.dataTransfer.effectAllowed = "move";
-      }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <Link href={`/jobs/${job.id}`} className="block">
+          <div className="flex items-start gap-2">
+            <button
+              type="button"
+              className="mt-0.5 text-slate-500 hover:text-slate-300 cursor-grab active:cursor-grabbing"
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/jobId", job.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onClick={(e) => {
+                // keep clicks from stealing focus on the card
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              aria-label="Drag job"
+              title="Drag"
+            >
+              <GripVertical className="w-4 h-4" />
+            </button>
+
+            <Link href={`/jobs/${job.id}`} className="block min-w-0 flex-1">
             <p className="font-medium text-sm truncate">{job.title}</p>
             <p className="text-xs text-slate-500 truncate">{job.company}</p>
-          </Link>
+            </Link>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {job.url && (
               <a

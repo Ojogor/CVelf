@@ -85,10 +85,10 @@ export default function NewResumePage() {
         </div>
 
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
-          <h2 className="font-semibold">Upload PDF</h2>
+          <h2 className="font-semibold">Upload PDF or DOCX</h2>
           <input
             type="file"
-            accept="application/pdf"
+            accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
             className="block w-full text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-700 file:text-white hover:file:bg-slate-600"
           />
@@ -98,7 +98,7 @@ export default function NewResumePage() {
             onClick={uploadPdf}
             className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium"
           >
-            {loading ? "Uploading…" : "Upload PDF"}
+            {loading ? "Uploading…" : "Upload file"}
           </button>
           <p className="text-xs text-slate-500">
             If extraction looks wrong, paste the text as a fallback.

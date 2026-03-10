@@ -3,10 +3,9 @@
 import { useState } from "react";
 
 const STATUSES = [
-  "pending",
-  "in_progress",
+  "interested",
   "applied",
-  "interviewing",
+  "interview",
   "offer",
   "rejected",
 ] as const;

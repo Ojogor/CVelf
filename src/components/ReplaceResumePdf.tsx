@@ -28,10 +28,10 @@ export function ReplaceResumePdf({ resumeId, onDone }: { resumeId: string; onDon
 
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
-      <h3 className="font-semibold">Replace resume PDF</h3>
+      <h3 className="font-semibold">Replace resume file (PDF or DOCX)</h3>
       <input
         type="file"
-        accept="application/pdf"
+        accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
         onChange={(e) => setFile(e.target.files?.[0] || null)}
         className="block w-full text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-700 file:text-white hover:file:bg-slate-600"
       />

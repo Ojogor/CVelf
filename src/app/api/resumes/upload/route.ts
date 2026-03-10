@@ -5,6 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
+import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
@@ -42,18 +43,27 @@ export async function POST(request: NextRequest) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "jobtracker-"));
-    const pdfPath = path.join(tmpDir, "resume.pdf");
-    await fs.writeFile(pdfPath, bytes);
+    const ext = inferExt(file);
+    const filePath = path.join(tmpDir, `resume.${ext}`);
+    await fs.writeFile(filePath, bytes);
 
-    const cwd = process.cwd();
-    const { text } = await runExtract(pdfPath, cwd);
-    const cleaned = cleanText(text || "");
+    let extracted = "";
+    if (ext === "pdf") {
+      const cwd = process.cwd();
+      const { text } = await runExtract(filePath, cwd);
+      extracted = text || "";
+    } else {
+      const { value } = await mammoth.extractRawText({ path: filePath });
+      extracted = value || "";
+    }
+
+    const cleaned = cleanText(extracted);
 
     const resume = await prisma.resume.create({
       data: {
         name,
         content: cleaned,
-        filePath: pdfPath,
+        filePath,
       },
     });
 
@@ -61,5 +71,13 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });
   }
+}
+
+function inferExt(file: File) {
+  const t = (file.type || "").toLowerCase();
+  const n = (file.name || "").toLowerCase();
+  if (t.includes("pdf") || n.endsWith(".pdf")) return "pdf";
+  if (t.includes("word") || t.includes("officedocument") || n.endsWith(".docx")) return "docx";
+  return "pdf";
 }
 
