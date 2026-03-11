@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseJob } from "@/lib/ats/parse";
+import { cleanJobTitle } from "@/lib/jobTitle";
 
 export const runtime = "nodejs";
 
@@ -8,10 +9,49 @@ function inferLocation(text: string) {
   const t = (text || "").toLowerCase();
   if (/\bremote\b/.test(t)) return "Remote";
   if (/\bhybrid\b/.test(t)) return "Hybrid";
-  // very light heuristic; can be improved later
   const m = (text || "").match(/\b(Location|Work Location)\s*:\s*(.+)$/im);
   if (m?.[2]) return m[2].trim().slice(0, 80);
   return undefined;
+}
+
+function inferSalary(text: string): string | undefined {
+  const raw = text || "";
+  const range = raw.match(/(?:Pay|Salary|Compensation)\s*:\s*\$?\s*([\d,.]+)\s*[-–—]\s*\$?\s*([\d,.]+)\s*(?:per year|annually|\/year)?/i);
+  if (range?.[1] && range?.[2]) return `$${range[1].trim()}–${range[2].trim()} per year`;
+  const single = raw.match(/(?:Pay|Salary)\s*:\s*(\$[\d,.]+(?:\s*per year| annually)?)/i);
+  if (single?.[1]) return single[1].trim();
+  return undefined;
+}
+
+function inferEmploymentType(text: string): string | undefined {
+  const t = (text || "").toLowerCase();
+  if (/\bfull[- ]?time\b/.test(t)) return "Full-time";
+  if (/\bpart[- ]?time\b/.test(t)) return "Part-time";
+  if (/\bcontract\b/.test(t)) return "Contract";
+  if (/\binternship\b/.test(t)) return "Internship";
+  if (/\btemporary\b|\btemp\b/.test(t)) return "Temporary";
+  if (/\bfreelance\b/.test(t)) return "Freelance";
+  return undefined;
+}
+
+/** Exclude lines that are salary, employment type, single tech, location, or EOE from responsibility list. */
+function filterResponsibilityItems(lines: string[]): string[] {
+  return lines.filter((line) => {
+    const t = line.trim().toLowerCase();
+    if (!t) return false;
+    if (/^(pay|salary|compensation)\s*:/i.test(t) || /\$[\d,]+/.test(t)) return false;
+    if (/^(full-time|part-time|contract|internship|temporary|freelance)\s*job$/i.test(t)) return false;
+    if (/^remote position\b/i.test(t) || /^applicants located in/i.test(t)) return false;
+    if (/^equal opportunity\b/i.test(t) || /accommodation available for recruitment/i.test(t)) return false;
+    if (/^commitment to fostering/i.test(t)) return false;
+    if (t.length <= 3) return false;
+    if (/\bcss attacks\b/i.test(t)) return false;
+    if (/^[A-Za-z0-9#+-]+(\s*\([^)]+\))?\s*$/.test(t) && t.length < 90) return false;
+    const words = t.split(/\s+/).filter(Boolean);
+    if (words.length === 1 && /^[a-z0-9#+-]+$/i.test(words[0])) return false;
+    if (words.length <= 2 && /^(typescript|javascript|redux|aws|css|html|node\.?js|react|vue|angular|python|java|sql|rds|ecs)$/i.test(words[0])) return false;
+    return true;
+  });
 }
 
 function inferMission(jobText: string) {
@@ -68,22 +108,30 @@ export async function GET(
         : job.description || "";
 
     const parsed = parseJob(combined, { title: job.title, company: job.company });
-    const location = inferLocation(job.description || "");
+    const location = inferLocation(combined);
     const mission = inferMission(job.description || "");
+    const salaryLabel =
+      job.salaryMin != null && job.salaryMax != null
+        ? `$${job.salaryMin.toLocaleString()}–${job.salaryMax.toLocaleString()} per year`
+        : inferSalary(combined);
+    const employmentType = inferEmploymentType(combined);
+    const filteredResponsibilities = filterResponsibilityItems(parsed.responsibilities);
 
     const keySkills = Array.from(new Set([...parsed.skillsRequired, ...parsed.skillsPreferred])).slice(0, 18);
 
     return NextResponse.json({
       overview: {
-        title: job.title,
+        title: cleanJobTitle(job.title),
         company: job.company,
         location,
         platform: job.platform,
         url: job.url,
         mission,
+        salary: salaryLabel ?? undefined,
+        employmentType: employmentType ?? undefined,
       },
       keySkills,
-      responsibilities: groupBySubheadings(parsed.responsibilities),
+      responsibilities: groupBySubheadings(filteredResponsibilities),
       requirements: parsed.requiredLines,
       niceToHave: parsed.preferredLines,
       raw: { description: job.description, parsedRequirements: job.parsedRequirements || null },

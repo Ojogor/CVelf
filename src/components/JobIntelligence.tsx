@@ -16,6 +16,32 @@ type JobFitAi = {
   suggestions: string[];
 };
 
+const SCORE_CACHE_KEY = "jtp_score";
+const SCORE_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function getScoreCache(jobId: string, resumeId: string): { jobFit: JobFitAi } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(`${SCORE_CACHE_KEY}_${jobId}_${resumeId}`);
+    if (!raw) return null;
+    const { jobFit, ts } = JSON.parse(raw);
+    if (!jobFit || Date.now() - (ts || 0) > SCORE_CACHE_TTL_MS) return null;
+    return { jobFit };
+  } catch {
+    return null;
+  }
+}
+
+function setScoreCache(jobId: string, resumeId: string, jobFit: JobFitAi) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      `${SCORE_CACHE_KEY}_${jobId}_${resumeId}`,
+      JSON.stringify({ jobFit, ts: Date.now() })
+    );
+  } catch {}
+}
+
 export function JobIntelligence({ jobId }: { jobId: string }) {
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [resumeId, setResumeId] = useState<string>("");
@@ -37,8 +63,16 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
     [resumes, resumeId],
   );
 
-  async function run() {
+  async function run(forceRefresh = false) {
     if (!resumeId) return;
+    if (!forceRefresh) {
+      const cached = getScoreCache(jobId, resumeId);
+      if (cached) {
+        setData(cached.jobFit);
+        setError(null);
+        return;
+      }
+    }
     setLoading(true);
     setError(null);
     try {
@@ -105,7 +139,7 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
                 ? "low"
                 : "medium";
 
-        setData({
+        const jobFit: JobFitAi = {
           score: Math.max(0, Math.min(100, Number(result.overallScore) || 0)),
           confidence,
           explanation: explanationLines.join(" "),
@@ -115,7 +149,9 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
           ),
           missing: missingSkills.slice(0, 16),
           suggestions: result.suggestions.slice(0, 8),
-        });
+        };
+        setData(jobFit);
+        setScoreCache(jobId, resumeId, jobFit);
         return;
       }
     } catch (e) {
@@ -170,7 +206,7 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
           </select>
           <button
             type="button"
-            onClick={run}
+            onClick={() => run(true)}
             disabled={!resumeId || loading}
             className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium"
           >

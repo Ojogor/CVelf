@@ -7,10 +7,11 @@ import { fetchJson } from "@/lib/fetchJson";
 import { FormattedText } from "@/components/FormattedText";
 import { JobEditorPanel } from "@/components/JobEditorPanel";
 import { JobIntelligence } from "@/components/JobIntelligence";
-import { ResumeTailor } from "@/components/ResumeTailor";
+import { TailoredResumeEditor } from "@/components/TailoredResumeEditor";
 import { AddApplicationRecord } from "@/components/AddApplicationRecord";
 import { CoverLetterAssistant } from "@/components/CoverLetterAssistant";
 import { getAiSettings } from "@/lib/ai/clientSettings";
+import { cleanJobTitle } from "@/lib/jobTitle";
 
 type JobPostingParsed = {
   overview: {
@@ -20,6 +21,8 @@ type JobPostingParsed = {
     platform?: string | null;
     url?: string | null;
     mission?: string;
+    salary?: string;
+    employmentType?: string;
   };
   keySkills: string[];
   responsibilities: Array<{ title: string; items: string[] }>;
@@ -155,7 +158,7 @@ export default function JobDetailPage() {
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="text-2xl font-bold truncate">
-              {parsed?.overview.title ?? job.title} — {parsed?.overview.company ?? job.company}
+              {cleanJobTitle(parsed?.overview.title ?? job.title)} — {parsed?.overview.company ?? job.company}
             </h1>
             <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
               <span className="px-2 py-0.5 rounded bg-slate-800/60 border border-slate-700/50">
@@ -164,6 +167,16 @@ export default function JobDetailPage() {
               <span className="px-2 py-0.5 rounded bg-slate-800/60 border border-slate-700/50">
                 Location: {parsed?.overview.location || "Unknown"}
               </span>
+              {parsed?.overview.salary && (
+                <span className="px-2 py-0.5 rounded bg-emerald-900/30 border border-emerald-700/50 text-emerald-200">
+                  {parsed.overview.salary}
+                </span>
+              )}
+              {parsed?.overview.employmentType && (
+                <span className="px-2 py-0.5 rounded bg-indigo-900/30 border border-indigo-700/50 text-indigo-200">
+                  {parsed.overview.employmentType}
+                </span>
+              )}
               {job.platform && (
                 <span className="px-2 py-0.5 rounded bg-slate-800/60 border border-slate-700/50">
                   {job.platform}
@@ -382,7 +395,14 @@ export default function JobDetailPage() {
               Tailor my cover letter
             </button>
           </div>
-          {docMode === "resume" && <ResumeTailor jobId={job.id} />}
+          {docMode === "resume" && (
+            <TailoredResumeEditor
+              jobId={job.id}
+              jobTitle={job.title ?? undefined}
+              jobCompany={job.company ?? undefined}
+              jobDescription={job.description ?? undefined}
+            />
+          )}
           {docMode === "cover" && <CoverLetterAssistant jobId={job.id} />}
         </div>
       )}

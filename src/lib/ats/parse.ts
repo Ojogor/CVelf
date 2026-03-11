@@ -82,9 +82,13 @@ function isBullet(line: string) {
 }
 
 function classifyLooseLine(line: string) {
-  const t = line.toLowerCase();
-  if (/(must\s+have|required|minimum\s+qualifications)/.test(t)) return "required" as const;
-  if (/(nice\s+to\s+have|preferred|bonus|assets?)/.test(t)) return "preferred" as const;
+  const t = line.toLowerCase().trim();
+  const looksRequired = /(must\s+have|^required\b|minimum\s+qualifications|qualifications\s*:)/.test(t);
+  const looksPreferred = /(nice\s+to\s+have|^preferred\b|^bonus\b|^assets?\b|bonus\s*points?)/.test(t);
+  // Only treat as preferred if it clearly signals nice-to-have and is not requirement language
+  if (looksRequired && !looksPreferred) return "required" as const;
+  if (looksPreferred && !looksRequired) return "preferred" as const;
+  if (looksPreferred && looksRequired) return "required" as const; // mixed: keep as required
   if (/(responsibilit|you will|what you'll do|what you will do)/.test(t)) return "responsibilities" as const;
   return "other" as const;
 }

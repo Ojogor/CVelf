@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { cleanJobTitle } from "@/lib/jobTitle";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -8,26 +9,6 @@ const CORS_HEADERS = {
 };
 
 export const runtime = "nodejs";
-
-function cleanJobTitle(raw: string | undefined | null) {
-  let t = (raw || "").trim();
-  if (!t) return "Untitled";
-
-  const suffixes = [
-    /\s*[-–—]\s*job\s*post(ing)?$/i,
-    /\s*[-–—]\s*job\s*description$/i,
-    /\s*[-–—]\s*careers?\b.*$/i,
-    /\s*\|\s*indeed.*$/i,
-    /\s*\|\s*linkedin.*$/i,
-    /\s*\|\s*glassdoor.*$/i,
-  ];
-
-  for (const rx of suffixes) {
-    t = t.replace(rx, "").trim();
-  }
-
-  return t || "Untitled";
-}
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });

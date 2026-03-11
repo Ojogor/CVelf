@@ -1,26 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { localTextSimilarity } from "@/lib/ats/semantic";
-
-function cleanJobTitle(raw: string) {
-  let t = (raw || "").trim();
-  if (!t) return "Untitled";
-
-  const suffixes = [
-    /\s*[-–—]\s*job\s*post(ing)?$/i,
-    /\s*[-–—]\s*job\s*description$/i,
-    /\s*[-–—]\s*careers?\b.*$/i,
-    /\s*\|\s*indeed.*$/i,
-    /\s*\|\s*linkedin.*$/i,
-    /\s*\|\s*glassdoor.*$/i,
-  ];
-
-  for (const rx of suffixes) {
-    t = t.replace(rx, "").trim();
-  }
-
-  return t || "Untitled";
-}
+import { cleanJobTitle } from "@/lib/jobTitle";
 
 export async function GET() {
   try {

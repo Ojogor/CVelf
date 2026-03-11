@@ -38,14 +38,15 @@ export async function extractJobStructure(
   const prompt = buildJsonOnlyPrompt(
     [
       "From the FULL job description below, extract structured data into JSON with exactly these top-level keys: required, preferred, responsibilities, keySkills, notes.",
-      "required: must-have qualifications/skills/experience (Requirements, Qualifications, Must have).",
-      "preferred: nice-to-have (Preferred, Bonus, Nice to have).",
-      "responsibilities: role duties (Responsibilities, What you'll do).",
-      "keySkills: technologies, tools, languages (Skills, Tech stack).",
-      "notes: any other notable items (one short string per note).",
-      "Return exactly one JSON object:",
-      "{ \"required\": [string], \"preferred\": [string], \"responsibilities\": [string], \"keySkills\": [string], \"notes\": [string] }",
-      "Rules: Each array element is one short plain-text item. No markdown, no bullet symbols, no extra keys.",
+      "",
+      "required: Put here ONLY items that appear under sections explicitly titled Requirements, Qualifications, Must have, Minimum qualifications, Required, What you'll bring, Required experience, or similar MUST-HAVE headings. These are mandatory for the role.",
+      "preferred: Put here ONLY items that appear under sections explicitly titled Preferred, Nice to have, Nice-to-have, Bonus, Assets, Preferred qualifications, Bonus points, or similar NICE-TO-HAVE headings. Do NOT put any must-have requirement in preferred. If a section is not clearly labeled as preferred/nice to have/bonus/assets, do not put its items in preferred.",
+      "responsibilities: Role duties (Responsibilities, What you'll do, etc.).",
+      "keySkills: Technologies, tools, languages (from Skills, Tech stack, or inferred from requirements/responsibilities).",
+      "notes: Any other notable items (one short string per note).",
+      "",
+      "Return exactly one JSON object: { \"required\": [string], \"preferred\": [string], \"responsibilities\": [string], \"keySkills\": [string], \"notes\": [string] }",
+      "Rules: Each array element is one short plain-text item. No markdown, no bullet symbols. Use the posting's own section headings to decide required vs preferred; only use preferred for items under Preferred/Nice to have/Bonus/Assets.",
     ].join("\n"),
     { t: asString(jobText).slice(0, 8000) }
   );

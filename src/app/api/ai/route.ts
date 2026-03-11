@@ -365,6 +365,61 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, data: r.data });
       }
 
+      if (task === "resume_refine_suggestions") {
+        const jobDesc = asString(input?.jobDescription).slice(0, 6000);
+        const resumeText = asString(input?.resumePlainText).slice(0, 6000);
+        if (!jobDesc || !resumeText) {
+          return NextResponse.json(
+            { ok: false, error: "jobDescription and resumePlainText are required." },
+            { status: 400 }
+          );
+        }
+        const prompt = buildJsonOnlyPrompt(
+          [
+            "You are a resume coach. Given a JOB DESCRIPTION and the candidate's current RESUME (plain text), suggest 3–8 concrete edits to better match the job.",
+            "Return exactly one JSON object with key: suggestions (array of objects).",
+            "Each suggestion object:",
+            "{",
+            '  "type": "remove" | "add" | "replace",',
+            '  "target": "short label for what to change (e.g. \'bullet in Experience\', \'Skills section\', \'Summary\')",',
+            '  "value": "for add/replace: the exact text or item to add or the replacement text; omit for remove",',
+            '  "reason": "one sentence why this helps for this job"',
+            "}",
+            "Rules:",
+            "- remove: suggest removing a bullet or phrase that doesn't match the job.",
+            "- add: suggest adding a skill, bullet, or phrase that matches job requirements (only if it fits the candidate's resume).",
+            "- replace: suggest rewording a bullet or the summary to mirror job language.",
+            "- Be specific: for remove/replace, quote a short snippet from the resume in target if helpful.",
+            "- No more than 8 suggestions; prioritize high-impact edits.",
+            "- Keep value concise; no markdown.",
+          ].join("\n"),
+          { job: jobDesc, resume: resumeText }
+        );
+        const mapSuggestions = (obj: any) => {
+          const arr = Array.isArray(obj?.s ?? obj?.suggestions) ? (obj?.s ?? obj?.suggestions) : [];
+          return {
+            suggestions: arr
+              .slice(0, 10)
+              .map((s: any) => ({
+                type: s?.type === "remove" || s?.type === "add" || s?.type === "replace" ? s.type : "replace",
+                target: String(s?.target ?? "").trim(),
+                value: s?.value != null ? String(s.value).trim() : undefined,
+                reason: String(s?.reason ?? "").trim(),
+              }))
+              .filter((s: any) => s.target || s.reason),
+          };
+        };
+        const r = await callGeminiWithSchema(apiKey, prompt, mapSuggestions, {
+          maxOutputTokens: 1200,
+          model: "models/gemini-2.5-flash-lite",
+          seedJson: true,
+        });
+        if (!r.ok) {
+          return NextResponse.json({ ok: false, error: r.error }, { status: 502 });
+        }
+        return NextResponse.json({ ok: true, data: r.data });
+      }
+
       if (task === "profile_autofill") {
         const prompt = buildJsonOnlyPrompt(
           [

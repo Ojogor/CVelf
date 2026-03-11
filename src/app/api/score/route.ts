@@ -60,7 +60,10 @@ export async function POST(request: NextRequest) {
     if (resumeId) {
       const resume = await prisma.resume.findUnique({ where: { id: String(resumeId) } });
       if (!resume) return NextResponse.json({ error: "Resume not found" }, { status: 404 });
-      resumeRaw = resume.content || "";
+      // When resumeText is provided (e.g. tailored document), use it for scoring instead of stored content.
+      resumeRaw = resumeText && resumeText.trim() ? resumeText.trim() : resume.content || "";
+    } else if (resumeText && resumeText.trim()) {
+      resumeRaw = resumeText.trim();
     }
 
     if (!jobRaw || !resumeRaw) {
@@ -112,6 +115,8 @@ type AnalysisStatus =
       note?: string;
       evidence: Evidence;
       detectedSkills: string[];
+      overlapSkills?: string[];
+      preliminaryFit?: "Good" | "Maybe" | "Unclear";
     }
   | {
       status: "partial";

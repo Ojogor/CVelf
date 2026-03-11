@@ -5,6 +5,9 @@ import type { Resume } from "@prisma/client";
 import { fetchJson } from "@/lib/fetchJson";
 import { getAiSettings } from "@/lib/ai/clientSettings";
 
+const TAILOR_CACHE_KEY = "jtp_tailor";
+const TAILOR_CACHE_TTL_MS = 30 * 60 * 1000;
+
 type TailorResult = {
   warning?: string;
   fastWins: string[];
@@ -64,8 +67,38 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
     [resumes, resumeId]
   );
 
-  async function run() {
+  useEffect(() => {
+    if (!jobId || !resumeId) return;
+    try {
+      const raw = sessionStorage.getItem(`${TAILOR_CACHE_KEY}_${jobId}_${resumeId}`);
+      if (!raw) return;
+      const { result: cached, ts } = JSON.parse(raw);
+      if (cached && Date.now() - (ts || 0) <= TAILOR_CACHE_TTL_MS) {
+        setResult(cached as TailorResult);
+        setError(null);
+      }
+    } catch {}
+  }, [jobId, resumeId]);
+
+  async function run(forceRefresh = false) {
     if (!resumeId) return;
+    if (!forceRefresh) {
+      try {
+        const raw = sessionStorage.getItem(`${TAILOR_CACHE_KEY}_${jobId}_${resumeId}`);
+        if (raw) {
+          const { result: cached, ts } = JSON.parse(raw);
+          if (cached && Date.now() - (ts || 0) <= TAILOR_CACHE_TTL_MS) {
+            setResult(cached as TailorResult);
+            setEdits({});
+            setAccepted({});
+            setSkipped({});
+            setSummaryIdx(0);
+            setError(null);
+            return;
+          }
+        }
+      } catch {}
+    }
     setLoading(true);
     setError(null);
     try {
@@ -80,12 +113,19 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
       });
       const data = await fetchJson<any>(res);
       if (!res.ok) throw new Error(data.error || "Tailor failed");
-      setResult(data as TailorResult);
+      const tailorResult = data as TailorResult;
+      setResult(tailorResult);
       setEdits({});
       setAccepted({});
       setSkipped({});
       setSummaryIdx(0);
       setAiNote(null);
+      try {
+        sessionStorage.setItem(
+          `${TAILOR_CACHE_KEY}_${jobId}_${resumeId}`,
+          JSON.stringify({ result: tailorResult, ts: Date.now() })
+        );
+      } catch {}
     } catch (e) {
       setError(e instanceof Error ? e.message : "Tailor failed");
     } finally {
@@ -304,7 +344,7 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
           </select>
           <button
             type="button"
-            onClick={run}
+            onClick={() => run()}
             disabled={!resumeId || loading}
             className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium"
           >
@@ -508,11 +548,11 @@ export function ResumeTailor({ jobId }: { jobId: string }) {
                       <div className="flex items-center justify-end">
                         <button
                           type="button"
-                          onClick={() => refineOneWithAi(i)}
-                          disabled={aiLoadingIdx === i}
+                          onClick={() => refineWithAi()}
+                          disabled={aiLoading}
                           className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
                         >
-                          {aiLoadingIdx === i ? "Refining…" : "Refine with AI"}
+                          {aiLoading ? "Refining…" : "Refine with AI"}
                         </button>
                       </div>
                       <textarea
