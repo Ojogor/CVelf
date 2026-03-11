@@ -1,0 +1,22 @@
+{
+  "templateName": "resume_elf_minimal",
+  "layout": {
+    "page": { "size": "letter", "fontSize": 11, "fontFamily": "Georgia" },
+    "sections": ["header", "experience", "skills"],
+    "theme": {
+      "primaryColor": "#111827",
+      "accentColor": "#10b981",
+      "backgroundColor": "#ffffff"
+    }
+  },
+  "renderRules": {
+    "bulletStyle": "dash",
+    "dateAlignment": "inline",
+    "maxBulletLength": 140
+  },
+  "sections": {
+    "experience": { "title": "Experience", "type": "block" },
+    "skills": { "title": "Skills", "type": "skillList" }
+  }
+}
+

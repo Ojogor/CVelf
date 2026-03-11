@@ -322,7 +322,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   root.innerHTML = `
     <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
       <div id="jtp-menu" style="display:none; width:220px; padding:10px; border-radius:12px; border:1px solid rgba(148,163,184,.35); background:rgba(15,23,42,.92); color:#e5e7eb; box-shadow:0 10px 30px rgba(0,0,0,.35);">
-        <div style="font-weight:700; font-size:12px; margin-bottom:8px;">Job Tracker Pro</div>
+        <div style="font-weight:700; font-size:12px; margin-bottom:8px;">cvElf</div>
         <button id="jtp-save-this" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid rgba(59,130,246,.55); background:rgba(37,99,235,.9); color:white; font-weight:700; cursor:pointer;">Save this job</button>
         <div style="height:8px;"></div>
         <button id="jtp-save-all" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid rgba(148,163,184,.35); background:rgba(15,23,42,.6); color:#e5e7eb; font-weight:700; cursor:pointer;">Save all jobs on this page</button>

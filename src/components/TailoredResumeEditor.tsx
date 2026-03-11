@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { Resume } from "@prisma/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchJson } from "@/lib/fetchJson";
 import { getAiSettings } from "@/lib/ai/clientSettings";
 import type {
@@ -11,6 +10,8 @@ import type {
   SummaryContent,
   SkillsContent,
   ExperienceItemContent,
+  ProjectItemContent,
+  EducationItemContent,
   BulletContent,
 } from "@/lib/tailor/document";
 import {
@@ -18,12 +19,32 @@ import {
   documentToExportPayload,
   createBlockId,
 } from "@/lib/tailor/document";
+import type { ResumeTemplate, SectionId } from "@/lib/resume/types";
+import { defaultResumeTemplate } from "@/lib/resume/templates";
+import { ResumeBlocksEditor } from "@/components/resume/ResumeBlocksEditor";
+import { ResumeHtmlPreview } from "@/components/resume/ResumeHtmlPreview";
+
+type ResumeOption = {
+  kind: "master" | "resume" | "generated";
+  id: string;
+  name: string;
+  updatedAt: string;
+  content: string;
+  template?: string | null;
+};
 
 type RefineSuggestion = {
   type: "remove" | "add" | "replace";
   target: string;
   value?: string;
   reason: string;
+  targetInfo?: {
+    section?: string;
+    company?: string;
+    role?: string;
+    bulletIndex?: number;
+    blockId?: string;
+  };
 };
 
 export function TailoredResumeEditor({
@@ -37,42 +58,115 @@ export function TailoredResumeEditor({
   jobCompany?: string;
   jobDescription?: string;
 }) {
-  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [resumes, setResumes] = useState<ResumeOption[]>([]);
   const [resumeId, setResumeId] = useState("");
   const [document, setDocument] = useState<ResumeDocument | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<RefineSuggestion[]>([]);
   const [suggestionStatus, setSuggestionStatus] = useState<Record<number, "accepted" | "denied" | null>>({});
+  const [suggestionIdx, setSuggestionIdx] = useState(0);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [confirmScore, setConfirmScore] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<"pdf" | "docx">("pdf");
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<Array<Pick<ResumeTemplate, "templateName" | "layout">>>([]);
+  const [templateName, setTemplateName] = useState<string>(defaultResumeTemplate().templateName);
+  const [template, setTemplate] = useState<ResumeTemplate>(defaultResumeTemplate());
+  const [sections, setSections] = useState<SectionId[]>(defaultResumeTemplate().layout.sections);
+  const [fontFamily, setFontFamily] = useState<string>(defaultResumeTemplate().layout.page.fontFamily);
+  const [theme, setTheme] = useState<{ primaryColor: string; accentColor: string; backgroundColor: string }>(
+    defaultResumeTemplate().layout.theme
+  );
+  const [fontSize, setFontSize] = useState<number>(defaultResumeTemplate().layout.page.fontSize || 11);
+  const [insertValue, setInsertValue] = useState("");
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/resumes");
-      const data = await fetchJson<Resume[]>(res);
-      setResumes(data);
-      setResumeId(data[0]?.id || "");
+      const res = await fetch("/api/resume-options");
+      const data = await fetchJson<ResumeOption[]>(res);
+      const items = Array.isArray(data) ? data : [];
+      setResumes(items);
+      setResumeId(items[0]?.id || "");
     })().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/templates/resume");
+      const data = await fetchJson<any>(res);
+      if (res.ok && Array.isArray(data?.templates)) {
+        setTemplates(data.templates);
+      }
+    })().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!templateName) return;
+      const res = await fetch(`/api/templates/resume?templateName=${encodeURIComponent(templateName)}`);
+      const data = await fetchJson<any>(res);
+      if (!res.ok) return;
+      const t = data?.template as ResumeTemplate;
+      if (!t?.layout?.page) return;
+      setTemplate(t);
+      setSections((t.layout.sections || []) as SectionId[]);
+      setFontFamily(t.layout.page.fontFamily || "Helvetica");
+      setTheme(t.layout.theme || { primaryColor: "#0f172a", accentColor: "#2563eb", backgroundColor: "#ffffff" });
+    })().catch(() => {});
+  }, [templateName]);
+
+  const selectedResume = useMemo(() => resumes.find((r) => r.id === resumeId) || null, [resumes, resumeId]);
+
+  const experienceIndex = useMemo(() => {
+    const map = new Map<string, string>(); // key -> experience_item blockId
+    if (!document) return map;
+    const expBlock = document.blocks.find((b) => b.type === "experience");
+    for (const item of expBlock?.children || []) {
+      if (item.type !== "experience_item") continue;
+      const c = item.content as ExperienceItemContent;
+      const key = `${(c.organization || "").toLowerCase()}|${(c.title || "").toLowerCase()}`;
+      map.set(key, item.id);
+    }
+    return map;
+  }, [document]);
+
+  useEffect(() => {
+    if (!suggestions.length) return;
+    const s = suggestions[Math.min(suggestionIdx, suggestions.length - 1)];
+    const info = s?.targetInfo;
+    if (!document || !info) return;
+    const key = `${(info.company || "").toLowerCase()}|${(info.role || "").toLowerCase()}`;
+    const id = info.blockId || (info.company || info.role ? experienceIndex.get(key) : undefined) || null;
+    setHighlightId(id);
+    if (id) {
+      // scroll after paint
+      setTimeout(() => {
+        const el = globalThis.document.querySelector(`[data-block-id="${CSS.escape(id)}"]`);
+        if (el && "scrollIntoView" in el) (el as any).scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 50);
+    }
+  }, [suggestionIdx, suggestions, document, experienceIndex]);
 
   const loadDocument = useCallback(async () => {
     if (!resumeId) return;
     setLoading(true);
     setError(null);
     try {
+      const kind = selectedResume?.kind || "resume";
       const res = await fetch(
-        `/api/tailor/document?jobId=${encodeURIComponent(jobId)}&resumeId=${encodeURIComponent(resumeId)}`
+        `/api/tailor/document?jobId=${encodeURIComponent(jobId)}&resumeId=${encodeURIComponent(resumeId)}&resumeKind=${encodeURIComponent(kind)}`
       );
       const data = await fetchJson<{ document: ResumeDocument }>(res);
       if (!res.ok) throw new Error((data as any).error || "Failed to load document");
       setDocument(data.document);
       setSuggestions([]);
       setSuggestionStatus({});
+      setSuggestionIdx(0);
       setConfirmScore(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load document");
@@ -163,6 +257,90 @@ export function TailoredResumeEditor({
     });
   }
 
+  function ensureSectionBlock(section: SectionId) {
+    if (!document) return;
+    const exists =
+      section === "projects"
+        ? document.blocks.some((b) => b.type === "projects")
+        : section === "education"
+          ? document.blocks.some((b) => b.type === "education")
+          : section === "experience"
+            ? document.blocks.some((b) => b.type === "experience")
+            : section === "skills"
+              ? document.blocks.some((b) => b.type === "skills")
+              : section === "header"
+                ? document.blocks.some((b) => b.type === "header")
+                : false;
+    if (exists) return;
+
+    const baseOrder = document.blocks.length;
+    if (section === "projects") {
+      const projItem: ResumeBlock = {
+        id: createBlockId(),
+        type: "project_item",
+        order: 0,
+        content: { name: "Project (edit)", dateRange: "" } as ProjectItemContent,
+        children: [
+          { id: createBlockId(), type: "bullet", order: 0, content: { text: "Describe what you built and impact." } as BulletContent },
+        ],
+      };
+      setDocument({
+        ...document,
+        blocks: [
+          ...document.blocks,
+          { id: createBlockId(), type: "projects", order: baseOrder, content: { title: "Projects" }, children: [projItem] },
+        ],
+      });
+    }
+    if (section === "education") {
+      const eduItem: ResumeBlock = {
+        id: createBlockId(),
+        type: "education_item",
+        order: 0,
+        content: { school: "School (edit)", degree: "", location: "", dateRange: "" } as EducationItemContent,
+        children: [
+          { id: createBlockId(), type: "bullet", order: 0, content: { text: "Coursework, honors, thesis, etc." } as BulletContent },
+        ],
+      };
+      setDocument({
+        ...document,
+        blocks: [
+          ...document.blocks,
+          { id: createBlockId(), type: "education", order: baseOrder, content: { title: "Education" }, children: [eduItem] },
+        ],
+      });
+    }
+  }
+
+  function insertBlock(kind: "header" | "summary" | "highlights" | "skills" | "experience" | "projects" | "education" | "custom") {
+    if (!document) return;
+    if (kind === "custom") {
+      const next: ResumeBlock = {
+        id: createBlockId(),
+        type: "section",
+        order: document.blocks.length,
+        content: { title: "Custom section", text: "" },
+        children: [{ id: createBlockId(), type: "bullet", order: 0, content: { text: "" } as BulletContent }],
+      };
+      setDocument({ ...document, blocks: [...document.blocks, next] });
+      return;
+    }
+    if (kind === "highlights") {
+      const next: ResumeBlock = {
+        id: createBlockId(),
+        type: "section",
+        order: document.blocks.length,
+        content: { title: "Highlights", text: "" },
+        children: [{ id: createBlockId(), type: "bullet", order: 0, content: { text: "" } as BulletContent }],
+      };
+      setDocument({ ...document, blocks: [...document.blocks, next] });
+      return;
+    }
+    const s = kind as SectionId;
+    setSections((prev) => (prev.includes(s) ? prev : Array.from(new Set([...prev, s]))));
+    ensureSectionBlock(s);
+  }
+
   function findBlock(blocks: ResumeBlock[], id: string): ResumeBlock | null {
     for (const b of blocks) {
       if (b.id === id) return b;
@@ -213,8 +391,18 @@ export function TailoredResumeEditor({
           apiKey: ai.apiKey,
           task: "resume_refine_suggestions",
           input: {
+            jobTitle: jobTitle ?? "",
+            company: jobCompany ?? "",
             jobDescription: jobDescription.slice(0, 6000),
             resumePlainText: documentToPlainText(document),
+            experienceOutline: (document.blocks.find((b) => b.type === "experience")?.children || [])
+              .filter((b) => b.type === "experience_item")
+              .map((b) => {
+                const c = b.content as ExperienceItemContent;
+                const bullets = (b.children || []).filter((x) => x.type === "bullet").length;
+                return `${c.organization} — ${c.title} (bullets:${bullets})`;
+              })
+              .slice(0, 10),
           },
         }),
       });
@@ -225,6 +413,7 @@ export function TailoredResumeEditor({
       const list = Array.isArray(data?.data?.suggestions) ? data.data.suggestions : [];
       setSuggestions(list);
       setSuggestionStatus({});
+      setSuggestionIdx(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refine failed");
     } finally {
@@ -237,6 +426,15 @@ export function TailoredResumeEditor({
     if (!s || !document) return;
     setSuggestionStatus((p) => ({ ...p, [index]: "accepted" }));
 
+    const ti = s.targetInfo;
+    const targetExperienceId = (() => {
+      if (!ti || !document) return null;
+      if (ti.blockId) return ti.blockId;
+      if (!ti.company && !ti.role) return null;
+      const key = `${(ti.company || "").toLowerCase()}|${(ti.role || "").toLowerCase()}`;
+      return experienceIndex.get(key) || null;
+    })();
+
     if (s.type === "add" && s.value) {
       const lowerTarget = (s.target || "").toLowerCase();
       if (lowerTarget.includes("skill")) {
@@ -247,9 +445,11 @@ export function TailoredResumeEditor({
         }
       } else if (lowerTarget.includes("bullet") || lowerTarget.includes("experience")) {
         const expBlock = document.blocks.find((b) => b.type === "experience");
-        const firstItem = expBlock?.children?.[0];
-        if (firstItem?.type === "experience_item") {
-          const children = firstItem.children || [];
+        const targetItem = targetExperienceId
+          ? expBlock?.children?.find((x) => x.id === targetExperienceId)
+          : expBlock?.children?.[0];
+        if (targetItem?.type === "experience_item") {
+          const children = targetItem.children || [];
           const newBullet: ResumeBlock = {
             id: createBlockId(),
             type: "bullet",
@@ -258,7 +458,7 @@ export function TailoredResumeEditor({
           };
           setDocument({
             ...document,
-            blocks: updateBlock(firstItem.id, (b) => ({
+            blocks: updateBlock(targetItem.id, (b) => ({
               ...b,
               children: [...(b.children || []), newBullet],
             })),
@@ -270,12 +470,46 @@ export function TailoredResumeEditor({
       if (lowerTarget.includes("summary")) {
         const summaryBlock = document.blocks.find((b) => b.type === "summary");
         if (summaryBlock) setBlockContent(summaryBlock.id, { text: s.value });
+      } else if ((lowerTarget.includes("bullet") || lowerTarget.includes("experience")) && targetExperienceId && ti && Number.isFinite(ti.bulletIndex)) {
+        const idx = ti.bulletIndex as number;
+        setDocument({
+          ...document,
+          blocks: updateBlock(targetExperienceId, (b) => {
+            const kids = (b.children || []).slice();
+            const bulletKids = kids.filter((k) => k.type === "bullet");
+            const targetBullet = bulletKids[idx];
+            if (!targetBullet) return b;
+            return {
+              ...b,
+              children: kids.map((k) => (k.id === targetBullet.id ? { ...k, content: { text: s.value } as BulletContent } : k)),
+            };
+          }),
+        });
+      }
+    } else if (s.type === "remove") {
+      const lowerTarget = (s.target || "").toLowerCase();
+      if ((lowerTarget.includes("bullet") || lowerTarget.includes("experience")) && targetExperienceId && ti && Number.isFinite(ti.bulletIndex)) {
+        const idx = ti.bulletIndex as number;
+        setDocument({
+          ...document,
+          blocks: updateBlock(targetExperienceId, (b) => {
+            const kids = (b.children || []).slice();
+            const bulletKids = kids.filter((k) => k.type === "bullet");
+            const targetBullet = bulletKids[idx];
+            if (!targetBullet) return b;
+            return { ...b, children: kids.filter((k) => k.id !== targetBullet.id) };
+          }),
+        });
       }
     }
+
+    // advance
+    setSuggestionIdx((p) => Math.min((suggestions?.length ?? 1) - 1, p + 1));
   }
 
   function denySuggestion(index: number) {
     setSuggestionStatus((p) => ({ ...p, [index]: "denied" }));
+    setSuggestionIdx((p) => Math.min((suggestions?.length ?? 1) - 1, p + 1));
   }
 
   async function confirmAndScore() {
@@ -283,10 +517,19 @@ export function TailoredResumeEditor({
     setError(null);
     try {
       const plain = documentToPlainText(document);
+      const ai = getAiSettings();
+      const kind = selectedResume?.kind as "master" | "resume" | "generated" | undefined;
       const res = await fetch("/api/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, resumeId, resumeText: plain }),
+        body: JSON.stringify({
+          jobId,
+          // Always send the tailored plain text; this allows scoring Master or Generated
+          // resumes without requiring a backing Resume row.
+          resumeText: plain,
+          resumeKind: kind,
+          apiKey: ai.provider === "gemini" ? ai.apiKey : undefined,
+        }),
       });
       const data = await fetchJson<any>(res);
       if (!res.ok) throw new Error(data?.error || "Score failed");
@@ -297,6 +540,105 @@ export function TailoredResumeEditor({
       setError(e instanceof Error ? e.message : "Score failed");
     }
   }
+
+  async function prefillFromGeminiOnce() {
+    const ai = getAiSettings();
+    if (ai.provider !== "gemini" || !ai.apiKey) return;
+    if (!selectedResume?.id || !selectedResume?.content) return;
+    const cacheKey = `jtp_resume_struct_${selectedResume.id}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        applyStructuredProfile(parsed);
+        return;
+      }
+    } catch {}
+
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "gemini",
+          apiKey: ai.apiKey,
+          task: "profile_autofill",
+          input: { text: selectedResume.content },
+        }),
+      });
+      const body = await fetchJson<any>(res);
+      if (!res.ok || body?.ok === false) return;
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(body.data));
+      } catch {}
+      applyStructuredProfile(body.data);
+    } catch {}
+  }
+
+  function applyStructuredProfile(data: any) {
+    if (!document || !data) return;
+    const profile = data?.profile || {};
+    const skills = data?.skills || {};
+    const exps = Array.isArray(data?.experiences) ? data.experiences : [];
+
+    // Header
+    const header = document.blocks.find((b) => b.type === "header");
+    if (header) {
+      const prev = header.content as HeaderContent;
+      setBlockContent(header.id, {
+        ...prev,
+        name: profile.fullName || prev.name,
+        email: profile.email || prev.email,
+        phone: profile.phone || prev.phone,
+        address: [profile.city, profile.region, profile.country].filter(Boolean).join(", ") || prev.address,
+        subtitle: profile.headline || prev.subtitle,
+      });
+    }
+
+    // Skills
+    const skillsBlock = document.blocks.find((b) => b.type === "skills");
+    const skillItems = Array.from(
+      new Set([...(skills.hard || []), ...(skills.tools || []), ...(skills.soft || [])])
+    ).slice(0, 30);
+    if (skillsBlock && skillItems.length) {
+      setBlockContent(skillsBlock.id, { items: skillItems } as SkillsContent);
+    }
+
+    // Experience: only replace if we currently have a single placeholder experience
+    const expBlock = document.blocks.find((b) => b.type === "experience");
+    const hasPlaceholder =
+      expBlock?.children?.length === 1 &&
+      (expBlock.children?.[0]?.content as any)?.organization?.toLowerCase?.().includes("edit");
+    if (expBlock && hasPlaceholder && exps.length) {
+      const nextChildren: ResumeBlock[] = exps.slice(0, 6).map((e: any, idx: number) => ({
+        id: createBlockId(),
+        type: "experience_item",
+        order: idx,
+        content: {
+          organization: String(e.organization || ""),
+          title: String(e.title || ""),
+          location: e.location ? String(e.location) : undefined,
+          startDate: e.startDate ? String(e.startDate) : undefined,
+          endDate: e.endDate ? String(e.endDate) : undefined,
+          current: Boolean(e.current),
+        } as ExperienceItemContent,
+        children: (Array.isArray(e.bullets) ? e.bullets : []).slice(0, 10).map((t: any, i: number) => ({
+          id: createBlockId(),
+          type: "bullet",
+          order: i,
+          content: { text: String(t || "") } as BulletContent,
+        })),
+      }));
+      setDocument({ ...document, blocks: updateBlock(expBlock.id, (b) => ({ ...b, children: nextChildren })) });
+    }
+  }
+
+  useEffect(() => {
+    // Run once per resume after the document is loaded.
+    if (!document || !selectedResume?.id) return;
+    prefillFromGeminiOnce().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [document?.version, selectedResume?.id]);
 
   async function exportDocument() {
     if (!document || !resumeId) return;
@@ -315,12 +657,16 @@ export function TailoredResumeEditor({
           resumeId,
           document: document,
           exportFormat,
+          templateName,
+          theme,
+          fontFamily,
+          fontSize,
           name: payload.name,
           summaryLines: payload.summaryLines,
           skills: payload.skills,
-          bullets: payload.bullets,
+          highlightsBullets: payload.highlightsBullets,
           template: "classic",
-          sectionsOrder: ["summary", "skills", "highlights"],
+          sectionIds: sections,
         }),
       });
       if (!res.ok) {
@@ -374,136 +720,334 @@ export function TailoredResumeEditor({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={resumeId}
-          onChange={(e) => setResumeId(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
-        >
-          {resumes.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={loadDocument}
-          disabled={loading}
-          className="px-3 py-2 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800 text-sm"
-        >
-          Reload
-        </button>
-        <button
-          type="button"
-          onClick={refineWithAi}
-          disabled={!document || aiLoading}
-          className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium"
-        >
-          {aiLoading ? "Refining…" : "Refine with AI"}
-        </button>
-        <button
-          type="button"
-          onClick={confirmAndScore}
-          disabled={!document}
-          className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-medium"
-        >
-          Confirm & recalc score
-        </button>
-        <select
-          value={exportFormat}
-          onChange={(e) => setExportFormat(e.target.value as "pdf" | "docx")}
-          className="px-2 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
-        >
-          <option value="pdf">PDF</option>
-          <option value="docx">DOCX</option>
-        </select>
-        <button
-          type="button"
-          onClick={exportDocument}
-          disabled={!document || exporting}
-          className="px-4 py-2 rounded-lg bg-slate-100 text-slate-900 hover:bg-white disabled:opacity-50 text-sm font-medium"
-        >
-          {exporting ? "Exporting…" : "Export"}
-        </button>
-      </div>
+    <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_320px] gap-4 items-start">
+      {/* Left rail: template/style (step 3) + actions */}
+      <aside className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3 lg:sticky lg:top-4">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Template</p>
+          <select
+            value={templateName}
+            onChange={(e) => setTemplateName(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+          >
+            {templates.length === 0 ? (
+              <option value={templateName}>{templateName}</option>
+            ) : (
+              templates.map((t) => (
+                <option key={t.templateName} value={t.templateName}>
+                  {t.templateName}
+                </option>
+              ))
+            )}
+          </select>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      {confirmScore != null && (
-        <p className="text-sm text-emerald-300">New score: {confirmScore}/100</p>
-      )}
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mt-2">Theme</p>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { id: "classicBlue", primaryColor: "#0f172a", accentColor: "#2563eb", backgroundColor: "#ffffff" },
+              { id: "emerald", primaryColor: "#064e3b", accentColor: "#10b981", backgroundColor: "#ffffff" },
+              { id: "graphite", primaryColor: "#111827", accentColor: "#6b7280", backgroundColor: "#ffffff" },
+              { id: "plum", primaryColor: "#3b0764", accentColor: "#a855f7", backgroundColor: "#ffffff" },
+              { id: "sand", primaryColor: "#1f2937", accentColor: "#b45309", backgroundColor: "#fff7ed" },
+              { id: "slateDark", primaryColor: "#e2e8f0", accentColor: "#38bdf8", backgroundColor: "#0b1220" },
+            ].map((p) => {
+              const active =
+                theme.primaryColor === p.primaryColor &&
+                theme.accentColor === p.accentColor &&
+                theme.backgroundColor === p.backgroundColor;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setTheme({ primaryColor: p.primaryColor, accentColor: p.accentColor, backgroundColor: p.backgroundColor })}
+                  className={[
+                    "h-9 rounded-lg border flex items-center justify-center",
+                    active ? "border-emerald-500" : "border-slate-700/60 hover:border-slate-500",
+                  ].join(" ")}
+                  title={p.id}
+                >
+                  <span
+                    className="w-5 h-5 rounded-full"
+                    style={{ background: `linear-gradient(135deg, ${p.accentColor}, ${p.primaryColor})` }}
+                  />
+                </button>
+              );
+            })}
+          </div>
 
-      {suggestions.length > 0 && (
-        <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4">
-          <h3 className="font-semibold text-slate-200 mb-2">AI suggestions</h3>
-          <ul className="space-y-2">
-            {suggestions.map((s, i) => (
-              <li
-                key={i}
-                className={`rounded-lg border p-3 text-sm ${
-                  suggestionStatus[i] === "accepted"
-                    ? "border-emerald-600/50 bg-emerald-950/20"
-                    : suggestionStatus[i] === "denied"
-                      ? "border-slate-700/50 bg-slate-900/30 opacity-60"
-                      : "border-slate-700/50 bg-slate-800/30"
-                }`}
-              >
-                <p className="text-slate-200">
-                  <span className="font-medium capitalize">{s.type}</span>: {s.target}
-                </p>
-                {s.value && <p className="text-slate-300 mt-1">“{s.value}”</p>}
-                <p className="text-slate-400 text-xs mt-1">{s.reason}</p>
-                {(suggestionStatus[i] === "accepted" || suggestionStatus[i] === "denied") ? (
-                  <span className="text-xs text-slate-500 mt-2 block">
-                    {suggestionStatus[i] === "accepted" ? "Accepted" : "Denied"}
-                  </span>
-                ) : (
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => applySuggestion(i)}
-                      className="px-2 py-1 rounded bg-emerald-600 text-white text-xs"
-                    >
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => denySuggestion(i)}
-                      className="px-2 py-1 rounded border border-slate-600 text-slate-300 text-xs"
-                    >
-                      Deny
-                    </button>
-                  </div>
-                )}
-              </li>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mt-2">Font</p>
+          <select
+            value={fontFamily}
+            onChange={(e) => setFontFamily(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+          >
+            {["Helvetica", "Georgia", "Times New Roman", "Arial"].map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
             ))}
-          </ul>
-        </div>
-      )}
+          </select>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mt-2">
+            Font size
+          </label>
+          <input
+            type="range"
+            min={9}
+            max={14}
+            value={fontSize}
+            onChange={(e) => setFontSize(Number(e.target.value))}
+            className="w-full"
+          />
 
-      {document && (
-        <ResumePaper
-          document={document}
-          setDocument={setDocument}
-          updateBlock={updateBlock}
-          setBlockContent={setBlockContent}
-          setBlocks={setBlocks}
-          reorderBlocks={reorderBlocks}
-          addChildBlock={addChildBlock}
-          removeBlock={removeBlock}
-          findBlock={findBlock}
-          draggingId={draggingId}
-          setDraggingId={setDraggingId}
-          dropTargetId={dropTargetId}
-          setDropTargetId={setDropTargetId}
-        />
-      )}
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mt-2">Insert</p>
+          <select
+            value={insertValue}
+            onChange={(e) => {
+              const v = e.target.value as any;
+              setInsertValue("");
+              if (!v) return;
+              insertBlock(v);
+            }}
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+          >
+            <option value="">Add a block…</option>
+            <option value="header">Header</option>
+            <option value="summary">Summary</option>
+            <option value="highlights">Highlights</option>
+            <option value="skills">Skills</option>
+            <option value="experience">Experience</option>
+            <option value="projects">Projects</option>
+            <option value="education">Education</option>
+            <option value="custom">Custom section</option>
+          </select>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(["header", "summary", "skills", "experience", "projects", "education"] as SectionId[]).map((s) => {
+              if (!sections.includes(s)) return null;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSections((prev) => prev.filter((x) => x !== s))}
+                  className="px-2 py-1 rounded-full border border-slate-300/20 bg-white/5 text-xs text-slate-200 hover:bg-white/10"
+                  title={`Hide ${s}`}
+                >
+                  <span className="capitalize">{s}</span> <span className="text-slate-300">×</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Resume</p>
+          <select
+            value={resumeId}
+            onChange={(e) => setResumeId(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+          >
+            {resumes.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={loadDocument}
+            disabled={loading}
+            className="w-full px-3 py-2 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800 text-sm"
+          >
+            {loading ? "Loading…" : "Reload resume"}
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Actions</p>
+          <button
+            type="button"
+            onClick={refineWithAi}
+            disabled={!document || aiLoading}
+            className="w-full px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium"
+          >
+            {aiLoading ? "Refining…" : "Refine with AI"}
+          </button>
+          <button
+            type="button"
+            onClick={confirmAndScore}
+            disabled={!document}
+            className="w-full px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-medium"
+          >
+            Confirm & recalc score
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Export</p>
+          <select
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as "pdf" | "docx")}
+            className="w-full px-2 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+          >
+            <option value="pdf">PDF</option>
+            <option value="docx">DOCX</option>
+          </select>
+          <button
+            type="button"
+            onClick={exportDocument}
+            disabled={!document || exporting}
+            className="w-full px-4 py-2 rounded-lg bg-slate-100 text-slate-900 hover:bg-white disabled:opacity-50 text-sm font-medium"
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </button>
+        </div>
+
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        {confirmScore != null && <p className="text-sm text-emerald-300">New score: {confirmScore}/100</p>}
+      </aside>
+
+      {/* Center: resume canvas */}
+      <main className="min-w-0">
+        {document && (
+          <>
+            <div className="flex items-center justify-end gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setViewMode("edit")}
+                className={[
+                  "px-3 py-1.5 rounded-md text-xs border",
+                  viewMode === "edit"
+                    ? "bg-white/10 border-slate-500/60 text-white"
+                    : "border-slate-700/60 text-slate-300 hover:text-white",
+                ].join(" ")}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("preview")}
+                className={[
+                  "px-3 py-1.5 rounded-md text-xs border",
+                  viewMode === "preview"
+                    ? "bg-white/10 border-slate-500/60 text-white"
+                    : "border-slate-700/60 text-slate-300 hover:text-white",
+                ].join(" ")}
+              >
+                Preview
+              </button>
+            </div>
+
+            {viewMode === "preview" ? (
+              <ResumeHtmlPreview document={document} theme={theme} fontFamily={fontFamily} fontSize={fontSize} templateName={templateName} />
+            ) : (
+              <ResumeBlocksEditor
+                document={document}
+                onChange={setDocument}
+                sections={sections}
+                theme={theme}
+                fontFamily={fontFamily}
+                fontSize={fontSize}
+                highlightId={highlightId}
+              />
+            )}
+          </>
+        )}
+      </main>
+
+      {/* Right rail: AI coach (step 5 will make this one-at-a-time) */}
+      <aside className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3 lg:sticky lg:top-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">AI coach</p>
+          <p className="text-[11px] text-slate-500">{jobCompany ? `${jobCompany}` : "Job-scoped"}</p>
+        </div>
+
+        {suggestions.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            Click <span className="text-slate-200 font-medium">Refine with AI</span> to get targeted edits for this job.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>
+                Suggestion {Math.min(suggestionIdx + 1, suggestions.length)} / {suggestions.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSuggestionIdx((p) => Math.min(suggestions.length - 1, p + 1))}
+                className="text-slate-300 hover:text-white"
+              >
+                Next →
+              </button>
+            </div>
+
+            {(() => {
+              const i = Math.min(suggestionIdx, suggestions.length - 1);
+              const s = suggestions[i];
+              const status = suggestionStatus[i];
+              return (
+                <div
+                  className={`rounded-lg border p-3 text-sm ${
+                    status === "accepted"
+                      ? "border-emerald-600/50 bg-emerald-950/20"
+                      : status === "denied"
+                        ? "border-slate-700/50 bg-slate-900/30 opacity-60"
+                        : "border-slate-700/50 bg-slate-800/30"
+                  }`}
+                >
+                  <p className="text-slate-200">
+                    <span className="font-medium capitalize">{s.type}</span>: {s.target}
+                  </p>
+                  {s.value && <p className="text-slate-300 mt-1">“{s.value}”</p>}
+                  <p className="text-slate-400 text-xs mt-1">{s.reason}</p>
+
+                  {s.targetInfo?.company && (
+                    <p className="text-[11px] text-slate-500 mt-2">
+                      Target: {s.targetInfo.section || "section"}
+                      {s.targetInfo.company ? ` · ${s.targetInfo.company}` : ""}
+                      {Number.isFinite(s.targetInfo.bulletIndex) ? ` · bullet #${(s.targetInfo.bulletIndex as number) + 1}` : ""}
+                    </p>
+                  )}
+
+                  {status === "accepted" || status === "denied" ? (
+                    <span className="text-xs text-slate-500 mt-2 block">
+                      {status === "accepted" ? "Applied" : "Skipped"}
+                    </span>
+                  ) : (
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => applySuggestion(i)}
+                        className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs"
+                      >
+                        Apply
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => denySuggestion(i)}
+                        className="px-3 py-1.5 rounded border border-slate-600 text-slate-300 text-xs"
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </aside>
     </div>
   );
 }
 
-type BlockContent = HeaderContent | SummaryContent | SkillsContent | ExperienceItemContent | BulletContent | { title?: string; text?: string };
+type BlockContent =
+  | HeaderContent
+  | SummaryContent
+  | SkillsContent
+  | ExperienceItemContent
+  | ProjectItemContent
+  | EducationItemContent
+  | BulletContent
+  | { title?: string; text?: string };
 
 function ResumePaper({
   document,
@@ -519,6 +1063,11 @@ function ResumePaper({
   setDraggingId,
   dropTargetId,
   setDropTargetId,
+  theme,
+  fontFamily,
+  fontSize,
+  highlightId,
+  sections,
 }: {
   document: ResumeDocument;
   setDocument: (d: ResumeDocument) => void;
@@ -533,15 +1082,37 @@ function ResumePaper({
   setDraggingId: (id: string | null) => void;
   dropTargetId: string | null;
   setDropTargetId: (id: string | null) => void;
+  theme: { primaryColor: string; accentColor: string; backgroundColor: string };
+  fontFamily: string;
+  fontSize: number;
+  highlightId: string | null;
+  sections: SectionId[];
 }) {
+  const visibleBlocks = document.blocks.filter((b) => {
+    if (b.type === "summary") return true; // always visible for now
+    if (b.type === "header") return sections.includes("header");
+    if (b.type === "skills") return sections.includes("skills");
+    if (b.type === "experience") return sections.includes("experience");
+    if (b.type === "projects") return sections.includes("projects");
+    if (b.type === "education") return sections.includes("education");
+    return true;
+  });
   return (
-    <div className="rounded-xl border border-slate-700/50 bg-white text-slate-900 shadow-lg max-w-3xl mx-auto">
+    <div
+      className="rounded-xl border border-slate-700/50 shadow-lg max-w-3xl mx-auto"
+      style={{
+        background: theme?.backgroundColor || "#ffffff",
+        color: theme?.primaryColor || "#0f172a",
+        fontFamily: fontFamily || "Helvetica",
+        fontSize: `${Math.max(9, Math.min(16, fontSize || 11))}px`,
+      }}
+    >
       <div className="p-8 min-h-[80vh]">
-        {document.blocks.map((block, idx) => (
+        {visibleBlocks.map((block, idx) => (
           <BlockRow
             key={block.id}
             block={block}
-            parentBlocks={document.blocks}
+            parentBlocks={visibleBlocks}
             parentId={undefined}
             index={idx}
             setDocument={setDocument}
@@ -556,6 +1127,7 @@ function ResumePaper({
             setDraggingId={setDraggingId}
             dropTargetId={dropTargetId}
             setDropTargetId={setDropTargetId}
+            highlightId={highlightId}
           />
         ))}
       </div>
@@ -580,6 +1152,7 @@ function BlockRow({
   setDraggingId,
   dropTargetId,
   setDropTargetId,
+  highlightId,
 }: {
   block: ResumeBlock;
   parentBlocks: ResumeBlock[];
@@ -597,9 +1170,11 @@ function BlockRow({
   setDraggingId: (id: string | null) => void;
   dropTargetId: string | null;
   setDropTargetId: (id: string | null) => void;
+  highlightId: string | null;
 }) {
   const isDrag = draggingId === block.id;
   const isDrop = dropTargetId === block.id;
+  const isHighlight = highlightId === block.id;
 
   const handleDragStart = (e: React.DragEvent) => {
     setDraggingId(block.id);
@@ -621,7 +1196,13 @@ function BlockRow({
 
   return (
     <div
-      className={`group relative ${isDrag ? "opacity-50" : ""} ${isDrop ? "ring-2 ring-emerald-500 rounded" : ""}`}
+      data-block-id={block.id}
+      className={[
+        "group relative transition-shadow",
+        isDrag ? "opacity-50" : "",
+        isDrop ? "ring-2 ring-emerald-500 rounded" : "",
+        isHighlight ? "ring-2 ring-indigo-500 rounded shadow-[0_0_0_6px_rgba(99,102,241,0.15)]" : "",
+      ].join(" ")}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -672,6 +1253,57 @@ function BlockRow({
               setDropTargetId={setDropTargetId}
             />
           )}
+          {block.type === "projects" && (
+            <ProjectsSectionEditor
+              block={block}
+              setBlockContent={setBlockContent}
+              updateBlock={updateBlock}
+              addChildBlock={(parentId) => {
+                // Add project item
+                const parent = findBlock(parentBlocks, parentId);
+                if (!parent) return;
+                const item: ResumeBlock = {
+                  id: createBlockId(),
+                  type: "project_item",
+                  order: (parent.children?.length ?? 0),
+                  content: { name: "Project (edit)", dateRange: "" } as ProjectItemContent,
+                  children: [
+                    { id: createBlockId(), type: "bullet", order: 0, content: { text: "Describe what you built and impact." } as BulletContent },
+                  ],
+                };
+                const nextKids = [...(parent.children || []), item];
+                setBlockContent(parentId, { ...(parent.content as any) });
+                // Use updateBlock on parentId
+                (setBlocks as any)(
+                  updateBlock(parentId, (b) => ({ ...b, children: nextKids }), parentBlocks)
+                );
+              }}
+            />
+          )}
+          {block.type === "education" && (
+            <EducationSectionEditor
+              block={block}
+              setBlockContent={setBlockContent}
+              updateBlock={updateBlock}
+              addChildBlock={(parentId) => {
+                const parent = findBlock(parentBlocks, parentId);
+                if (!parent) return;
+                const item: ResumeBlock = {
+                  id: createBlockId(),
+                  type: "education_item",
+                  order: (parent.children?.length ?? 0),
+                  content: { school: "School (edit)", degree: "", location: "", dateRange: "" } as EducationItemContent,
+                  children: [
+                    { id: createBlockId(), type: "bullet", order: 0, content: { text: "Coursework, honors, thesis, etc." } as BulletContent },
+                  ],
+                };
+                const nextKids = [...(parent.children || []), item];
+                (setBlocks as any)(
+                  updateBlock(parentId, (b) => ({ ...b, children: nextKids }), parentBlocks)
+                );
+              }}
+            />
+          )}
           {block.type === "experience_item" && (
             <ExperienceItemEditor
               block={block}
@@ -685,6 +1317,20 @@ function BlockRow({
               setDraggingId={setDraggingId}
               dropTargetId={dropTargetId}
               setDropTargetId={setDropTargetId}
+            />
+          )}
+          {block.type === "project_item" && (
+            <ProjectItemEditor
+              block={block}
+              setBlockContent={setBlockContent}
+              addBullet={() => addChildBlock(block.id, "bullet")}
+            />
+          )}
+          {block.type === "education_item" && (
+            <EducationItemEditor
+              block={block}
+              setBlockContent={setBlockContent}
+              addBullet={() => addChildBlock(block.id, "bullet")}
             />
           )}
           {block.type === "bullet" && (
@@ -727,6 +1373,7 @@ function BlockRow({
               setDraggingId={setDraggingId}
               dropTargetId={dropTargetId}
               setDropTargetId={setDropTargetId}
+              highlightId={highlightId}
             />
           ))}
           <button
@@ -902,6 +1549,52 @@ function ExperienceSectionEditor({
   );
 }
 
+function ProjectsSectionEditor({
+  block,
+  setBlockContent,
+  updateBlock,
+  addChildBlock,
+}: {
+  block: ResumeBlock;
+  setBlockContent: (id: string, content: BlockContent) => void;
+  updateBlock: (id: string, fn: (b: ResumeBlock) => ResumeBlock, blocks?: ResumeBlock[]) => ResumeBlock[];
+  addChildBlock: (parentId: string) => void;
+}) {
+  return (
+    <div className="mb-2 flex items-center justify-between">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        {(block.content as { title?: string }).title || "Projects"}
+      </h3>
+      <button type="button" onClick={() => addChildBlock(block.id)} className="text-xs text-slate-500 hover:text-slate-700">
+        + Project
+      </button>
+    </div>
+  );
+}
+
+function EducationSectionEditor({
+  block,
+  setBlockContent,
+  updateBlock,
+  addChildBlock,
+}: {
+  block: ResumeBlock;
+  setBlockContent: (id: string, content: BlockContent) => void;
+  updateBlock: (id: string, fn: (b: ResumeBlock) => ResumeBlock, blocks?: ResumeBlock[]) => ResumeBlock[];
+  addChildBlock: (parentId: string) => void;
+}) {
+  return (
+    <div className="mb-2 flex items-center justify-between">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        {(block.content as { title?: string }).title || "Education"}
+      </h3>
+      <button type="button" onClick={() => addChildBlock(block.id)} className="text-xs text-slate-500 hover:text-slate-700">
+        + School
+      </button>
+    </div>
+  );
+}
+
 function ExperienceItemEditor({
   block,
   setBlockContent,
@@ -930,41 +1623,41 @@ function ExperienceItemEditor({
   const c = block.content as ExperienceItemContent;
   return (
     <div className="mb-3">
-      <div className="grid grid-cols-2 gap-2 text-sm">
+      <div className="grid grid-cols-2 gap-2 text-sm min-w-0">
         <input
           type="text"
           value={c.title}
           onChange={(e) => setBlockContent(block.id, { ...c, title: e.target.value })}
-          className="font-semibold border border-slate-200 rounded px-2 py-1"
+          className="font-semibold border border-slate-200 rounded px-2 py-1 w-full min-w-0"
           placeholder="Job title"
         />
         <input
           type="text"
           value={c.organization}
           onChange={(e) => setBlockContent(block.id, { ...c, organization: e.target.value })}
-          className="border border-slate-200 rounded px-2 py-1"
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
           placeholder="Company"
         />
         <input
           type="text"
           value={c.location ?? ""}
           onChange={(e) => setBlockContent(block.id, { ...c, location: e.target.value })}
-          className="border border-slate-200 rounded px-2 py-1"
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
           placeholder="Location"
         />
-        <div className="flex gap-2">
+        <div className="flex gap-2 min-w-0">
           <input
             type="text"
             value={c.startDate ?? ""}
             onChange={(e) => setBlockContent(block.id, { ...c, startDate: e.target.value })}
-            className="border border-slate-200 rounded px-2 py-1"
+            className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
             placeholder="Start"
           />
           <input
             type="text"
             value={c.endDate ?? ""}
             onChange={(e) => setBlockContent(block.id, { ...c, endDate: e.target.value })}
-            className="border border-slate-200 rounded px-2 py-1"
+            className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
             placeholder="End"
           />
         </div>
@@ -991,6 +1684,7 @@ function ExperienceItemEditor({
                 setDraggingId={setDraggingId}
                 dropTargetId={dropTargetId}
                 setDropTargetId={setDropTargetId}
+                highlightId={null}
               />
             ) : null
           )}
@@ -1002,6 +1696,97 @@ function ExperienceItemEditor({
         className="text-xs text-slate-500 hover:text-slate-700 mt-1"
       >
         + Bullet
+      </button>
+    </div>
+  );
+}
+
+function ProjectItemEditor({
+  block,
+  setBlockContent,
+  addBullet,
+}: {
+  block: ResumeBlock;
+  setBlockContent: (id: string, content: BlockContent) => void;
+  addBullet: () => void;
+}) {
+  const c = block.content as ProjectItemContent;
+  return (
+    <div className="mb-3">
+      <div className="grid grid-cols-2 gap-2 text-sm min-w-0">
+        <input
+          type="text"
+          value={c.name || ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, name: e.target.value })}
+          className="font-semibold border border-slate-200 rounded px-2 py-1 w-full min-w-0"
+          placeholder="Project name"
+        />
+        <input
+          type="text"
+          value={c.dateRange ?? ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, dateRange: e.target.value })}
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
+          placeholder="Date range"
+        />
+        <input
+          type="text"
+          value={c.link ?? ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, link: e.target.value })}
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0 col-span-2"
+          placeholder="Link (optional)"
+        />
+      </div>
+      <button type="button" onClick={addBullet} className="text-xs text-slate-500 hover:text-slate-700 mt-1">
+        + Bullet
+      </button>
+    </div>
+  );
+}
+
+function EducationItemEditor({
+  block,
+  setBlockContent,
+  addBullet,
+}: {
+  block: ResumeBlock;
+  setBlockContent: (id: string, content: BlockContent) => void;
+  addBullet: () => void;
+}) {
+  const c = block.content as EducationItemContent;
+  return (
+    <div className="mb-3">
+      <div className="grid grid-cols-2 gap-2 text-sm min-w-0">
+        <input
+          type="text"
+          value={c.school || ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, school: e.target.value })}
+          className="font-semibold border border-slate-200 rounded px-2 py-1 w-full min-w-0"
+          placeholder="School"
+        />
+        <input
+          type="text"
+          value={c.degree ?? ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, degree: e.target.value })}
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
+          placeholder="Degree"
+        />
+        <input
+          type="text"
+          value={c.location ?? ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, location: e.target.value })}
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
+          placeholder="Location"
+        />
+        <input
+          type="text"
+          value={c.dateRange ?? ""}
+          onChange={(e) => setBlockContent(block.id, { ...c, dateRange: e.target.value })}
+          className="border border-slate-200 rounded px-2 py-1 w-full min-w-0"
+          placeholder="Date range"
+        />
+      </div>
+      <button type="button" onClick={addBullet} className="text-xs text-slate-500 hover:text-slate-700 mt-1">
+        + Detail
       </button>
     </div>
   );

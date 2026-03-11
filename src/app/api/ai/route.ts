@@ -104,6 +104,39 @@ function mapProfileOut(obj: any) {
   return { profile, skills, experiences };
 }
 
+function mapResumeRefineOut(obj: any) {
+  const arr = Array.isArray(obj?.s ?? obj?.suggestions) ? (obj?.s ?? obj?.suggestions) : [];
+  const normalizeTargetInfo = (t: any) => {
+    if (!t || typeof t !== "object") return undefined;
+    const bulletIndexRaw = t.bulletIndex ?? t.bullet_index ?? t.i;
+    const bulletIndex =
+      typeof bulletIndexRaw === "number" && Number.isFinite(bulletIndexRaw)
+        ? bulletIndexRaw
+        : typeof bulletIndexRaw === "string" && bulletIndexRaw.trim() && Number.isFinite(Number(bulletIndexRaw))
+          ? Number(bulletIndexRaw)
+          : undefined;
+    return {
+      section: typeof t.section === "string" && t.section.trim() ? t.section.trim() : undefined,
+      company: typeof t.company === "string" && t.company.trim() ? t.company.trim() : undefined,
+      role: typeof t.role === "string" && t.role.trim() ? t.role.trim() : undefined,
+      bulletIndex,
+      blockId: typeof t.blockId === "string" && t.blockId.trim() ? t.blockId.trim() : undefined,
+    };
+  };
+  return {
+    suggestions: arr
+      .slice(0, 10)
+      .map((s: any) => ({
+        type: s?.type === "remove" || s?.type === "add" || s?.type === "replace" ? s.type : "replace",
+        target: String(s?.target ?? "").trim(),
+        value: s?.value != null ? String(s.value).trim() : undefined,
+        reason: String(s?.reason ?? "").trim(),
+        targetInfo: normalizeTargetInfo(s?.targetInfo ?? s?.t ?? null),
+      }))
+      .filter((s: any) => s.target || s.reason),
+  };
+}
+
 function buildCoverLetterRefinePrompt(input: {
   draft: string;
   jobTitle?: string;
@@ -368,6 +401,9 @@ export async function POST(req: NextRequest) {
       if (task === "resume_refine_suggestions") {
         const jobDesc = asString(input?.jobDescription).slice(0, 6000);
         const resumeText = asString(input?.resumePlainText).slice(0, 6000);
+        const jobTitle = asString(input?.jobTitle).slice(0, 140);
+        const company = asString(input?.company).slice(0, 140);
+        const outline = Array.isArray(input?.experienceOutline) ? input.experienceOutline.slice(0, 12) : [];
         if (!jobDesc || !resumeText) {
           return NextResponse.json(
             { ok: false, error: "jobDescription and resumePlainText are required." },
@@ -377,39 +413,29 @@ export async function POST(req: NextRequest) {
         const prompt = buildJsonOnlyPrompt(
           [
             "You are a resume coach. Given a JOB DESCRIPTION and the candidate's current RESUME (plain text), suggest 3–8 concrete edits to better match the job.",
+            jobTitle || company ? `Job context: ${[jobTitle, company].filter(Boolean).join(" — ")}` : "",
+            outline.length ? `Experience outline (company — role):\n${outline.join("\n")}` : "",
             "Return exactly one JSON object with key: suggestions (array of objects).",
             "Each suggestion object:",
             "{",
             '  "type": "remove" | "add" | "replace",',
             '  "target": "short label for what to change (e.g. \'bullet in Experience\', \'Skills section\', \'Summary\')",',
             '  "value": "for add/replace: the exact text or item to add or the replacement text; omit for remove",',
-            '  "reason": "one sentence why this helps for this job"',
+            '  "reason": "one sentence why this helps for this job",',
+            '  "targetInfo": { "section": "header|summary|skills|experience|projects|education", "company": string?, "role": string?, "bulletIndex": number? }',
             "}",
             "Rules:",
             "- remove: suggest removing a bullet or phrase that doesn't match the job.",
             "- add: suggest adding a skill, bullet, or phrase that matches job requirements (only if it fits the candidate's resume).",
             "- replace: suggest rewording a bullet or the summary to mirror job language.",
             "- Be specific: for remove/replace, quote a short snippet from the resume in target if helpful.",
+            "- When targeting experience bullets, fill targetInfo.company and targetInfo.role from the experience outline when possible, and set bulletIndex (0-based) for replace/remove.",
             "- No more than 8 suggestions; prioritize high-impact edits.",
             "- Keep value concise; no markdown.",
-          ].join("\n"),
+          ].filter(Boolean).join("\n"),
           { job: jobDesc, resume: resumeText }
         );
-        const mapSuggestions = (obj: any) => {
-          const arr = Array.isArray(obj?.s ?? obj?.suggestions) ? (obj?.s ?? obj?.suggestions) : [];
-          return {
-            suggestions: arr
-              .slice(0, 10)
-              .map((s: any) => ({
-                type: s?.type === "remove" || s?.type === "add" || s?.type === "replace" ? s.type : "replace",
-                target: String(s?.target ?? "").trim(),
-                value: s?.value != null ? String(s.value).trim() : undefined,
-                reason: String(s?.reason ?? "").trim(),
-              }))
-              .filter((s: any) => s.target || s.reason),
-          };
-        };
-        const r = await callGeminiWithSchema(apiKey, prompt, mapSuggestions, {
+        const r = await callGeminiWithSchema(apiKey, prompt, mapResumeRefineOut, {
           maxOutputTokens: 1200,
           model: "models/gemini-2.5-flash-lite",
           seedJson: true,

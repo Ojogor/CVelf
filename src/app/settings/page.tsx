@@ -78,7 +78,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold mb-2">Settings</h1>
         <p className="text-sm text-slate-400 max-w-2xl">
-          Configure how Job Tracker Pro uses AI. Keys are stored only in your browser (localStorage). The default{" "}
+          Configure how cvElf uses AI. Keys are stored only in your browser (localStorage). The default{" "}
           <span className="font-semibold text-slate-200">Local</span> mode avoids any external API calls and uses the
           built-in, token-free logic.
         </p>

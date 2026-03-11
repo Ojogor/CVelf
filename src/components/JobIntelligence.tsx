@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Resume } from "@prisma/client";
 import { fetchJson } from "@/lib/fetchJson";
 import { getAiSettings } from "@/lib/ai/clientSettings";
 import type { ScoreResult } from "@/lib/ats/types";
@@ -42,8 +41,17 @@ function setScoreCache(jobId: string, resumeId: string, jobFit: JobFitAi) {
   } catch {}
 }
 
+type ResumeOption = {
+  kind: "master" | "resume" | "generated";
+  id: string;
+  name: string;
+  updatedAt: string;
+  content: string;
+  template?: string | null;
+};
+
 export function JobIntelligence({ jobId }: { jobId: string }) {
-  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [resumes, setResumes] = useState<ResumeOption[]>([]);
   const [resumeId, setResumeId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<JobFitAi | null>(null);
@@ -51,10 +59,11 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/resumes");
-      const data = await fetchJson<Resume[]>(res);
-      setResumes(data);
-      setResumeId(data[0]?.id || "");
+      const res = await fetch("/api/resume-options");
+      const data = await fetchJson<ResumeOption[]>(res);
+      const items = Array.isArray(data) ? data : [];
+      setResumes(items);
+      setResumeId(items[0]?.id || "");
     })().catch(() => {});
   }, []);
 
@@ -77,7 +86,27 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
     setError(null);
     try {
       const ai = getAiSettings();
-      const payload: { jobId: string; resumeId: string; apiKey?: string } = { jobId, resumeId };
+      const opt = resumes.find((r) => r.id === resumeId);
+      const payload: {
+        jobId: string;
+        resumeId?: string;
+        resumeKind?: "master" | "resume" | "generated";
+        resumeText?: string;
+        apiKey?: string;
+      } = { jobId };
+
+      if (opt) {
+        if (opt.kind === "resume") {
+          payload.resumeId = opt.id;
+          payload.resumeKind = "resume";
+        } else {
+          // For Master and Generated, send the plain text directly so the scoring
+          // API can operate without needing a backing Resume row.
+          payload.resumeKind = opt.kind;
+          payload.resumeText = opt.content;
+        }
+      }
+
       if (ai.provider === "gemini" && ai.apiKey) payload.apiKey = ai.apiKey;
 
       const scoreRes = await fetch("/api/score", {

@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseJob, parseResume } from "@/lib/ats/parse";
 import { buildCoverLetter } from "@/lib/coverLetter/engine";
+import { documentToPlainText } from "@/lib/tailor/document";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { jobId, resumeId, jobText, resumeText } = body || {};
+    const { jobId, resumeId, resumeKind, jobText, resumeText } = body || {};
 
     let jobRaw: string | null = jobText || null;
     let resumeRaw: string | null = resumeText || null;
@@ -25,9 +27,36 @@ export async function POST(request: NextRequest) {
     }
 
     if (resumeId) {
-      const resume = await prisma.resume.findUnique({ where: { id: String(resumeId) } });
-      if (!resume) return NextResponse.json({ error: "Resume not found" }, { status: 404 });
-      resumeRaw = resume.content || "";
+      const kind = String(resumeKind || "resume");
+      if (kind === "generated") {
+        const gr = await prisma.generatedResume.findUnique({ where: { id: String(resumeId) } });
+        if (!gr) return NextResponse.json({ error: "Generated resume not found" }, { status: 404 });
+        try {
+          const assembly = JSON.parse(gr.assemblyJson || "{}");
+          if (assembly?.document?.blocks?.length) resumeRaw = documentToPlainText(assembly.document);
+          else resumeRaw = gr.assemblyJson || "";
+        } catch {
+          resumeRaw = gr.assemblyJson || "";
+        }
+      } else if (kind === "master") {
+        const [resumes, generated] = await Promise.all([
+          prisma.resume.findMany({ orderBy: { updatedAt: "desc" } }),
+          prisma.generatedResume.findMany({ orderBy: { updatedAt: "desc" } }),
+        ]);
+        const parts: string[] = [];
+        for (const r of resumes) if (r.content) parts.push(String(r.content));
+        for (const g of generated) {
+          try {
+            const assembly = JSON.parse(g.assemblyJson || "{}");
+            if (assembly?.document?.blocks?.length) parts.push(documentToPlainText(assembly.document));
+          } catch {}
+        }
+        resumeRaw = parts.map((s) => s.trim()).filter(Boolean).join("\n\n---\n\n");
+      } else {
+        const resume = await prisma.resume.findUnique({ where: { id: String(resumeId) } });
+        if (!resume) return NextResponse.json({ error: "Resume not found" }, { status: 404 });
+        resumeRaw = resume.content || "";
+      }
     }
 
     if (!jobRaw || !resumeRaw) {

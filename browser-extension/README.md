@@ -1,4 +1,4 @@
-# Job Tracker Pro — Chrome Extension (MV3)
+# cvElf — Chrome Extension (MV3)
 
 ## What it does
 - One-click **save job** from the current tab.

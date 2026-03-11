@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/fetchJson";
+import { getAiSettings } from "@/lib/ai/clientSettings";
 
 export default function NewResumePage() {
   const router = useRouter();
@@ -11,6 +12,26 @@ export default function NewResumePage() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function normalizeOrExplain(resumeId: string) {
+    const settings = getAiSettings();
+    const norm = await fetch("/api/resumes/normalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        settings.provider === "gemini" && settings.apiKey
+          ? { apiKey: settings.apiKey, resumeId }
+          : { resumeId }
+      ),
+    });
+    const normBody = await fetchJson<any>(norm);
+    const generatedResumeId = normBody?.results?.[0]?.generatedResumeId;
+    if (!norm.ok || !generatedResumeId) {
+      setError(normBody?.error || "Normalize failed");
+      return null;
+    }
+    return String(generatedResumeId);
+  }
 
   async function createFromText() {
     setLoading(true);
@@ -23,6 +44,12 @@ export default function NewResumePage() {
       });
       const data = await fetchJson<any>(res);
       if (!res.ok) throw new Error(data.error || "Create failed");
+      const generatedResumeId = await normalizeOrExplain(String(data.id));
+      if (generatedResumeId) {
+        router.push(`/resumes/builder/${generatedResumeId}`);
+        return;
+      }
+      // Fallback: still keep the master resume around.
       router.push(`/resumes/${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Create failed");
@@ -42,6 +69,11 @@ export default function NewResumePage() {
       const res = await fetch("/api/resumes/upload", { method: "POST", body: form });
       const data = await fetchJson<any>(res);
       if (!res.ok) throw new Error(data.error || "Upload failed");
+      const generatedResumeId = await normalizeOrExplain(String(data.resume.id));
+      if (generatedResumeId) {
+        router.push(`/resumes/builder/${generatedResumeId}`);
+        return;
+      }
       router.push(`/resumes/${data.resume.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");

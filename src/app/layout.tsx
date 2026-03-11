@@ -3,8 +3,8 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Job Tracker Pro",
-  description: "Track jobs, tailor resumes, and apply smarter.",
+  title: "cvElf",
+  description: "cvElf helps you track jobs, tailor your CV, and apply smarter.",
 };
 
 export default function RootLayout({
@@ -18,7 +18,7 @@ export default function RootLayout({
         <header className="border-b border-slate-700/50 bg-slate-950/80 backdrop-blur">
           <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <h1 className="text-xl font-bold tracking-tight">
-              Job Tracker <span className="text-blue-500">Pro</span>
+              cvElf
             </h1>
             <nav className="flex gap-6 text-sm text-slate-400">
               <Link href="/" className="hover:text-white transition">

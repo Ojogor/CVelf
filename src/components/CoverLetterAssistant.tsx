@@ -1,9 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Resume } from "@prisma/client";
 import { fetchJson } from "@/lib/fetchJson";
 import { getAiSettings } from "@/lib/ai/clientSettings";
+import { defaultResumeTemplate } from "@/lib/resume/templates";
+import { renderCoverLetterHtml } from "@/lib/render/coverLetterHtml";
+
+type ResumeOption = {
+  kind: "master" | "resume" | "generated";
+  id: string;
+  name: string;
+  updatedAt: string;
+  content: string;
+  template?: string | null;
+};
 
 type CoverLetterResult = {
   subject: string;
@@ -13,18 +23,24 @@ type CoverLetterResult = {
 };
 
 export function CoverLetterAssistant({ jobId }: { jobId: string }) {
-  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [resumes, setResumes] = useState<ResumeOption[]>([]);
   const [resumeId, setResumeId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<CoverLetterResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [refining, setRefining] = useState(false);
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
+  const [fontFamily, setFontFamily] = useState<string>(defaultResumeTemplate().layout.page.fontFamily || "Helvetica");
+  const [fontSize, setFontSize] = useState<number>(defaultResumeTemplate().layout.page.fontSize || 11);
+  const [theme, setTheme] = useState<{ primaryColor: string; accentColor: string; backgroundColor: string }>(
+    defaultResumeTemplate().layout.theme
+  );
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/resumes");
-      const items = await fetchJson<Resume[]>(res);
+      const res = await fetch("/api/resume-options");
+      const items = await fetchJson<ResumeOption[]>(res);
       setResumes(Array.isArray(items) ? items : []);
       setResumeId((Array.isArray(items) && items[0]?.id) || "");
     })().catch(() => {});
@@ -40,10 +56,11 @@ export function CoverLetterAssistant({ jobId }: { jobId: string }) {
     setLoading(true);
     setError(null);
     try {
+      const opt = resumes.find((r) => r.id === resumeId);
       const res = await fetch("/api/cover-letter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, resumeId }),
+        body: JSON.stringify({ jobId, resumeId, resumeKind: opt?.kind || "resume" }),
       });
       const body = await fetchJson<any>(res);
       if (!res.ok) throw new Error(body.error || "Generate failed");
@@ -122,6 +139,33 @@ export function CoverLetterAssistant({ jobId }: { jobId: string }) {
     }
   }
 
+  async function exportPdf() {
+    if (!draft.trim()) return;
+    setError(null);
+    try {
+      const res = await fetch("/api/export/cover-letter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: data?.subject || "", body: draft, theme, fontFamily, fontSize }),
+      });
+      if (!res.ok) {
+        const body = await fetchJson<any>(res);
+        throw new Error(body?.error || "Export failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = globalThis.document.createElement("a");
+      a.href = url;
+      a.download = "cover-letter.pdf";
+      globalThis.document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    }
+  }
+
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -184,6 +228,13 @@ export function CoverLetterAssistant({ jobId }: { jobId: string }) {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={exportPdf}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 text-slate-900 hover:bg-white"
+                >
+                  Export PDF
+                </button>
+                <button
+                  type="button"
                   onClick={() => refineWithAi(draft)}
                   disabled={refining}
                   className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
@@ -199,12 +250,99 @@ export function CoverLetterAssistant({ jobId }: { jobId: string }) {
                 </button>
               </div>
             </div>
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              rows={14}
-              className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm resize-y"
-            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("edit")}
+                  className={[
+                    "px-3 py-1.5 rounded-md text-xs border",
+                    viewMode === "edit"
+                      ? "bg-white/10 border-slate-500/60 text-white"
+                      : "border-slate-700/60 text-slate-300 hover:text-white",
+                  ].join(" ")}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("preview")}
+                  className={[
+                    "px-3 py-1.5 rounded-md text-xs border",
+                    viewMode === "preview"
+                      ? "bg-white/10 border-slate-500/60 text-white"
+                      : "border-slate-700/60 text-slate-300 hover:text-white",
+                  ].join(" ")}
+                >
+                  Preview
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={fontFamily}
+                  onChange={(e) => setFontFamily(e.target.value)}
+                  className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+                >
+                  {["Helvetica", "Georgia", "Times New Roman", "Courier New"].map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={9}
+                    max={15}
+                    value={fontSize}
+                    onChange={(e) => setFontSize(Number(e.target.value))}
+                    className="w-32"
+                  />
+                  <span className="text-xs text-slate-400 w-10 text-right">{fontSize}px</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {[
+                { primaryColor: "#0f172a", accentColor: "#2563eb", backgroundColor: "#ffffff" },
+                { primaryColor: "#111827", accentColor: "#10b981", backgroundColor: "#ffffff" },
+                { primaryColor: "#0b1320", accentColor: "#f97316", backgroundColor: "#ffffff" },
+              ].map((t, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setTheme(t)}
+                  className="rounded-lg border border-slate-700/50 bg-slate-800/60 p-2 text-left"
+                  title="Theme"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className="h-3 w-3 rounded" style={{ background: t.primaryColor }} />
+                    <span className="h-3 w-3 rounded" style={{ background: t.accentColor }} />
+                    <span className="h-3 w-3 rounded border border-slate-700" style={{ background: t.backgroundColor }} />
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {viewMode === "preview" ? (
+              <div className="rounded-xl border border-slate-700/50 shadow-lg overflow-hidden bg-white">
+                <iframe
+                  title="Cover letter preview"
+                  className="w-full min-h-[70vh]"
+                  sandbox="allow-same-origin"
+                  srcDoc={renderCoverLetterHtml({ subject: data.subject, body: draft }, { theme, fontFamily, fontSize })}
+                />
+              </div>
+            ) : (
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={14}
+                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm resize-y"
+              />
+            )}
             <p className="text-[11px] text-slate-500">
               Tip: paste the Requirements/Qualifications section (Extract Requirements) for a more targeted draft.
             </p>

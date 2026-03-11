@@ -1,0 +1,25 @@
+{
+  "templateName": "resume_elf_modern",
+  "layout": {
+    "page": { "size": "letter", "fontSize": 11, "fontFamily": "Helvetica" },
+    "sections": ["header", "experience", "projects", "education", "skills"],
+    "theme": {
+      "primaryColor": "#0f172a",
+      "accentColor": "#2563eb",
+      "backgroundColor": "#ffffff"
+    }
+  },
+  "renderRules": {
+    "bulletStyle": "dot",
+    "dateAlignment": "right",
+    "sectionDivider": "lightGreyLine",
+    "maxBulletLength": 140
+  },
+  "sections": {
+    "experience": { "title": "Experience", "type": "timeline" },
+    "projects": { "title": "Projects", "type": "projectList" },
+    "education": { "title": "Education", "type": "educationList" },
+    "skills": { "title": "Skills", "type": "skillList" }
+  }
+}
+

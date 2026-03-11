@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Job Tracker Pro — Quick Save",
+  "name": "cvElf — Quick Save",
   "version": "0.2.0",
-  "description": "Save job postings to Job Tracker Pro in one click.",
+  "description": "Save job postings to cvElf in one click.",
   "action": {
     "default_title": "Save job",
     "default_popup": "popup.html"

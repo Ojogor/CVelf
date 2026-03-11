@@ -5,6 +5,7 @@ import { scoreHybrid } from "@/lib/ats/score";
 import { analyzeJobSignals } from "@/lib/ats/skills";
 import type { ScoreResult } from "@/lib/ats/types";
 import { getGeminiApiKey, scoreJobFit } from "@/lib/ai/tasks";
+import { documentToPlainText } from "@/lib/tailor/document";
 
 export const runtime = "nodejs";
 
@@ -41,7 +42,7 @@ function aiScoreToResult(ai: { score: number; strong: string[]; partial: string[
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { jobId, resumeId, jobText, resumeText, apiKey: bodyApiKey } = body || {};
+    const { jobId, resumeId, jobText, resumeText, apiKey: bodyApiKey, resumeKind } = body || {};
     const apiKey = getGeminiApiKey(bodyApiKey);
 
     let jobRaw: string | null = jobText || null;
@@ -57,13 +58,57 @@ export async function POST(request: NextRequest) {
       jobMeta = { title: job.title || undefined, company: job.company || undefined };
     }
 
-    if (resumeId) {
+    const kind = (resumeKind as "master" | "resume" | "generated" | undefined) || undefined;
+
+    // If explicit resumeText is provided (e.g. tailored document), always prefer it and
+    // skip any database lookup so we can score Master/Generated/custom text safely.
+    if (resumeText && String(resumeText).trim()) {
+      resumeRaw = String(resumeText).trim();
+    } else if (kind === "master") {
+      // Build Master combined content directly from all resumes + generated resumes.
+      const [resumes, generated] = await Promise.all([
+        prisma.resume.findMany(),
+        prisma.generatedResume.findMany(),
+      ]);
+
+      const generatedTexts = generated.map((g) => {
+        try {
+          const assembly = JSON.parse(g.assemblyJson || "{}");
+          if (assembly?.document?.blocks?.length) {
+            return documentToPlainText(assembly.document);
+          }
+        } catch {
+          // ignore bad assemblyJson
+        }
+        return "";
+      });
+
+      const masterText = [
+        ...resumes.map((r) => (r.content ? String(r.content) : "")),
+        ...generatedTexts,
+      ]
+        .map((s) => String(s || "").trim())
+        .filter(Boolean)
+        .join("\n\n---\n\n");
+
+      resumeRaw = masterText || null;
+    } else if (kind === "generated" && resumeId) {
+      // Score directly against a GeneratedResume's structured document.
+      const gr = await prisma.generatedResume.findUnique({ where: { id: String(resumeId) } });
+      if (!gr) return NextResponse.json({ error: "Generated resume not found" }, { status: 404 });
+      try {
+        const assembly = JSON.parse(gr.assemblyJson || "{}");
+        if (assembly?.document?.blocks?.length) {
+          resumeRaw = documentToPlainText(assembly.document);
+        }
+      } catch {
+        // fall through to empty text if parsing fails
+      }
+    } else if (resumeId) {
+      // Legacy/raw resume row.
       const resume = await prisma.resume.findUnique({ where: { id: String(resumeId) } });
       if (!resume) return NextResponse.json({ error: "Resume not found" }, { status: 404 });
-      // When resumeText is provided (e.g. tailored document), use it for scoring instead of stored content.
-      resumeRaw = resumeText && resumeText.trim() ? resumeText.trim() : resume.content || "";
-    } else if (resumeText && resumeText.trim()) {
-      resumeRaw = resumeText.trim();
+      resumeRaw = resume.content ? String(resume.content) : "";
     }
 
     if (!jobRaw || !resumeRaw) {

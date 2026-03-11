@@ -11,23 +11,62 @@ import type {
   ExperienceItemContent,
   BulletContent,
 } from "@/lib/tailor/document";
-import { createBlockId } from "@/lib/tailor/document";
+import { createBlockId, documentToPlainText } from "@/lib/tailor/document";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const jobId = searchParams.get("jobId");
     const resumeId = searchParams.get("resumeId");
+    const resumeKind = (searchParams.get("resumeKind") || "resume").trim();
     if (!resumeId) {
       return NextResponse.json({ error: "resumeId is required" }, { status: 400 });
     }
 
-    const resume = await prisma.resume.findUnique({ where: { id: String(resumeId) } });
-    if (!resume) return NextResponse.json({ error: "Resume not found" }, { status: 404 });
+    let resumeName = "Resume";
+    let resumeRaw = "";
+    if (resumeKind === "generated") {
+      const gr = await prisma.generatedResume.findUnique({ where: { id: String(resumeId) } });
+      if (!gr) return NextResponse.json({ error: "Generated resume not found" }, { status: 404 });
+      resumeName = gr.name || "Resume";
+      try {
+        const assembly = JSON.parse(gr.assemblyJson || "{}");
+        if (assembly?.document?.blocks?.length) {
+          resumeRaw = documentToPlainText(assembly.document);
+        }
+      } catch {}
+      if (!resumeRaw) {
+        // fallback to raw assembly json (best-effort)
+        resumeRaw = gr.assemblyJson || "";
+      }
+    } else if (resumeKind === "master") {
+      const [resumes, generated] = await Promise.all([
+        prisma.resume.findMany({ orderBy: { updatedAt: "desc" } }),
+        prisma.generatedResume.findMany({ orderBy: { updatedAt: "desc" } }),
+      ]);
+      resumeName = "Master (combined)";
+      const parts: string[] = [];
+      for (const r of resumes) if (r.content) parts.push(String(r.content));
+      for (const g of generated) {
+        try {
+          const assembly = JSON.parse(g.assemblyJson || "{}");
+          if (assembly?.document?.blocks?.length) {
+            parts.push(documentToPlainText(assembly.document));
+          }
+        } catch {}
+      }
+      resumeRaw = parts.map((s) => s.trim()).filter(Boolean).join("\n\n---\n\n");
+    } else {
+      const resume = await prisma.resume.findUnique({ where: { id: String(resumeId) } });
+      if (!resume) return NextResponse.json({ error: "Resume not found" }, { status: 404 });
+      resumeName = resume.name || "Resume";
+      resumeRaw = resume.content || "";
+    }
 
-    const parsedResume = parseResume(resume.content || "");
+    const parsedResume = parseResume(resumeRaw || "");
     let tailorResult: ReturnType<typeof buildTailor> | null = null;
     if (jobId) {
       const job = await prisma.job.findUnique({ where: { id: String(jobId) } });
@@ -44,15 +83,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const experiences = await prisma.masterExperience.findMany({
-      orderBy: [{ type: "asc" }, { position: "asc" }, { createdAt: "desc" }],
-      include: {
-        bullets: { orderBy: [{ position: "asc" }, { createdAt: "asc" }] },
-      },
-    });
+    const experiences =
+      resumeKind === "resume"
+        ? await prisma.masterExperience.findMany({
+            orderBy: [{ type: "asc" }, { position: "asc" }, { createdAt: "desc" }],
+            include: {
+              bullets: { orderBy: [{ position: "asc" }, { createdAt: "asc" }] },
+            },
+          })
+        : [];
 
     const document = buildDocumentFromResumeAndTailor({
-      resumeName: resume.name,
+      resumeName,
       parsedResume,
       tailorResult,
       experiences,
@@ -151,23 +193,23 @@ function buildDocumentFromResumeAndTailor(args: {
       };
     });
   } else {
-    const bullets = [
-      ...(parsedResume.experienceBullets || []),
-      ...(parsedResume.projectBullets || []),
-    ].slice(0, 12);
+    // If we don't have a structured experience bank, keep a single placeholder job
+    // rather than mixing bullets across multiple inferred roles.
+    const bullets = [...(parsedResume.experienceBullets || []), ...(parsedResume.projectBullets || [])].slice(0, 12);
     const suggested =
       tailorResult?.bulletSuggestions
         ?.filter((b) => b.suggestion && (b.confidence === "strong" || b.confidence === "moderate"))
         .slice(0, 10)
         .map((b) => (b.suggestion as string).trim())
-        .filter(Boolean) || bullets;
-    const useBullets = suggested.length ? suggested : bullets.length ? bullets : ["Add your key achievements here."];
+        .filter(Boolean) || [];
+    const useBullets =
+      suggested.length ? suggested : bullets.length ? bullets : ["Add your key achievements here."];
     const singleItem: ResumeBlock = {
       id: createBlockId(),
       type: "experience_item",
       content: {
-        organization: "Company",
-        title: "Job Title",
+        organization: "Company (edit)",
+        title: "Role / Title (edit)",
         startDate: "",
         endDate: "",
       } as ExperienceItemContent,

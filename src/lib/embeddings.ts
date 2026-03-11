@@ -17,7 +17,8 @@ function truncate(text: string): string {
 function tokenize(text: string): string[] {
   return truncate(text)
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    // Avoid Unicode property escapes for broad TS target compatibility.
+    .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2);
 }
@@ -41,14 +42,15 @@ function cosineFromTF(a: Map<string, number>, b: Map<string, number>): number {
   let dot = 0;
   let normA = 0;
   let normB = 0;
-  for (const [term, av] of a.entries()) {
+  // Avoid iterating Map iterators directly for broad TS target compatibility.
+  a.forEach((av, term) => {
     const bv = b.get(term) ?? 0;
     dot += av * bv;
     normA += av * av;
-  }
-  for (const v of b.values()) {
+  });
+  b.forEach((v) => {
     normB += v * v;
-  }
+  });
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   return denom === 0 ? 0 : dot / denom;
 }

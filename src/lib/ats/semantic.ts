@@ -16,16 +16,19 @@ function termFreq(tokens: string[]) {
 
 function dot(a: Map<string, number>, b: Map<string, number>) {
   let s = 0;
-  for (const [k, av] of a) {
+  // Avoid iterating Map directly to keep TS target compatibility.
+  a.forEach((av, k) => {
     const bv = b.get(k);
     if (bv) s += av * bv;
-  }
+  });
   return s;
 }
 
 function norm(m: Map<string, number>) {
   let s = 0;
-  for (const v of m.values()) s += v * v;
+  m.forEach((v) => {
+    s += v * v;
+  });
   return Math.sqrt(s);
 }
 

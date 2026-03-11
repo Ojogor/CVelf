@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { fetchJson } from "@/lib/fetchJson";
 
 export default function NewJobPage() {
+  return (
+    <Suspense>
+      <NewJobPageInner />
+    </Suspense>
+  );
+}
+
+function NewJobPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isPasteMode = searchParams.get("paste") === "1";

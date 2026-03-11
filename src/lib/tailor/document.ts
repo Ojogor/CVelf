@@ -9,13 +9,20 @@ export type HeaderContent = {
   phone?: string;
   address?: string;
   subtitle?: string;
+  linkedin?: string;
+  github?: string;
+  website?: string;
 };
 
 export type SummaryContent = {
+  /** Plain-text summary used for search/scoring. */
   text: string;
+  /** Optional rich-text HTML version (bold/italic/size). */
+  richText?: string;
 };
 
 export type SkillsContent = {
+  title?: string;
   items: string[];
 };
 
@@ -28,8 +35,24 @@ export type ExperienceItemContent = {
   current?: boolean;
 };
 
+export type ProjectItemContent = {
+  name: string;
+  dateRange?: string;
+  link?: string;
+};
+
+export type EducationItemContent = {
+  school: string;
+  degree?: string;
+  location?: string;
+  dateRange?: string;
+};
+
 export type BulletContent = {
+  /** Plain-text bullet used for search/scoring. */
   text: string;
+  /** Optional rich-text HTML version (bold/italic/size). */
+  richText?: string;
 };
 
 export type BlockType =
@@ -38,6 +61,10 @@ export type BlockType =
   | "skills"
   | "experience"
   | "experience_item"
+  | "projects"
+  | "project_item"
+  | "education"
+  | "education_item"
   | "bullet"
   | "section"; // generic section with title + children
 
@@ -46,6 +73,8 @@ export type BlockContent =
   | SummaryContent
   | SkillsContent
   | ExperienceItemContent
+  | ProjectItemContent
+  | EducationItemContent
   | BulletContent
   | { title?: string; text?: string };
 
@@ -63,6 +92,14 @@ export type ResumeDocument = {
 };
 
 /** Flatten document to plain text for scoring or export. */
+function stripHtml(html: string): string {
+  return String(html || "")
+    .replace(/<\/(p|div|li|br)\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function documentToPlainText(doc: ResumeDocument): string {
   const parts: string[] = [];
 
@@ -76,11 +113,15 @@ export function documentToPlainText(doc: ResumeDocument): string {
           if (h.email) parts.push(h.email);
           if (h.phone) parts.push(h.phone);
           if (h.address) parts.push(h.address);
+          if (h.github) parts.push(h.github);
+          if (h.linkedin) parts.push(h.linkedin);
+          if (h.website) parts.push(h.website);
           break;
         }
         case "summary": {
           const s = b.content as SummaryContent;
-          if (s.text) parts.push(s.text);
+          const txt = s.richText ? stripHtml(s.richText) : s.text;
+          if (txt) parts.push(txt);
           break;
         }
         case "skills": {
@@ -99,9 +140,31 @@ export function documentToPlainText(doc: ResumeDocument): string {
           if (b.children?.length) walk(b.children, indent + "  ");
           break;
         }
+        case "projects":
+        case "education":
+          if (b.children?.length) walk(b.children, indent);
+          break;
+        case "project_item": {
+          const p = b.content as ProjectItemContent;
+          parts.push(p.name || "");
+          if (p.dateRange) parts.push(p.dateRange);
+          if (p.link) parts.push(p.link);
+          if (b.children?.length) walk(b.children, indent + "  ");
+          break;
+        }
+        case "education_item": {
+          const e = b.content as EducationItemContent;
+          parts.push(e.school || "");
+          if (e.degree) parts.push(e.degree);
+          if (e.location) parts.push(e.location);
+          if (e.dateRange) parts.push(e.dateRange);
+          if (b.children?.length) walk(b.children, indent + "  ");
+          break;
+        }
         case "bullet": {
           const u = b.content as BulletContent;
-          if (u.text) parts.push(`• ${u.text}`);
+          const txt = u.richText ? stripHtml(u.richText) : u.text;
+          if (txt) parts.push(`• ${txt}`);
           break;
         }
         case "section": {
@@ -127,24 +190,35 @@ export function documentToExportPayload(
   meta?: { targetRole?: string; company?: string }
 ): {
   name: string;
+  contactLine?: string;
   summaryLines: string[];
   skills: string[];
-  bullets: string[];
+  highlightsBullets: string[];
   experiences: Array<{ title: string; organization: string; location?: string; dateRange: string; bullets: string[] }>;
+  projects: Array<{ name: string; dateRange?: string; link?: string; bullets: string[] }>;
+  education: Array<{ school: string; degree?: string; location?: string; dateRange?: string; details: string[] }>;
 } {
   let name = "";
+  let contactLine: string | undefined = undefined;
   const summaryLines: string[] = [];
   const skills: string[] = [];
-  const bullets: string[] = [];
+  const highlightsBullets: string[] = [];
   const experiences: Array<{ title: string; organization: string; location?: string; dateRange: string; bullets: string[] }> = [];
+  const projects: Array<{ name: string; dateRange?: string; link?: string; bullets: string[] }> = [];
+  const education: Array<{ school: string; degree?: string; location?: string; dateRange?: string; details: string[] }> = [];
 
   for (const b of doc.blocks) {
     if (b.type === "header") {
       const h = b.content as HeaderContent;
       name = h.name || "";
+      const contacts = [h.email, h.phone, h.address, h.github, h.linkedin, h.website]
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter(Boolean);
+      contactLine = contacts.length ? contacts.join(" • ") : undefined;
     } else if (b.type === "summary") {
       const s = b.content as SummaryContent;
-      if (s.text) summaryLines.push(s.text);
+      const raw = s.richText ? stripHtml(s.richText) : s.text;
+      if (raw) summaryLines.push(raw);
     } else if (b.type === "skills") {
       const s = b.content as SkillsContent;
       if (s.items?.length) skills.push(...s.items);
@@ -164,12 +238,52 @@ export function documentToExportPayload(
           dateRange,
           bullets: childBullets,
         });
-        bullets.push(...childBullets);
+      }
+    } else if (b.type === "projects" && b.children?.length) {
+      for (const it of b.children) {
+        if (it.type !== "project_item") continue;
+        const p = it.content as ProjectItemContent;
+        const childBullets = (it.children || [])
+          .filter((c) => c.type === "bullet")
+          .map((c) => (c.content as BulletContent).text)
+          .filter(Boolean);
+        projects.push({
+          name: p.name,
+          dateRange: p.dateRange,
+          link: p.link,
+          bullets: childBullets,
+        });
+      }
+    } else if (b.type === "education" && b.children?.length) {
+      for (const it of b.children) {
+        if (it.type !== "education_item") continue;
+        const e = it.content as EducationItemContent;
+        const details = (it.children || [])
+          .filter((c) => c.type === "bullet")
+          .map((c) => (c.content as BulletContent).text)
+          .filter(Boolean);
+        education.push({
+          school: e.school,
+          degree: e.degree,
+          location: e.location,
+          dateRange: e.dateRange,
+          details,
+        });
+      }
+    } else if (b.type === "section") {
+      const s = b.content as { title?: string; text?: string };
+      const title = (s.title || "").trim().toLowerCase();
+      if (title === "highlights") {
+        const childBullets = (b.children || [])
+          .filter((c) => c.type === "bullet")
+          .map((c) => (c.content as BulletContent).text)
+          .filter(Boolean);
+        highlightsBullets.push(...childBullets);
       }
     }
   }
 
-  return { name, summaryLines, skills, bullets, experiences };
+  return { name, contactLine, summaryLines, skills, highlightsBullets, experiences, projects, education };
 }
 
 export function createBlockId(): string {

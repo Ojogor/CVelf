@@ -1,0 +1,25 @@
+{
+  "templateName": "resume_elf_centered",
+  "layout": {
+    "page": { "size": "letter", "fontSize": 12, "fontFamily": "Georgia" },
+    "sections": ["header", "summary", "experience", "projects", "education", "skills"],
+    "theme": {
+      "primaryColor": "#111827",
+      "accentColor": "#2563eb",
+      "backgroundColor": "#ffffff"
+    }
+  },
+  "renderRules": {
+    "bulletStyle": "dot",
+    "dateAlignment": "right",
+    "sectionDivider": "lightGreyLine",
+    "maxBulletLength": 140
+  },
+  "sections": {
+    "experience": { "title": "Experience", "type": "timeline" },
+    "projects": { "title": "Projects", "type": "projectList" },
+    "education": { "title": "Education", "type": "educationList" },
+    "skills": { "title": "Skills", "type": "skillList" }
+  }
+}
+

@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:studio": "prisma studio"
@@ -23,14 +24,13 @@
     "next": "14.2.18",
     "openai": "^4.73.0",
     "pdf-parse": "^2.4.5",
-    "pdfkit": "^0.17.2",
+    "playwright": "^1.58.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "@types/pdfkit": "^0.13.9",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitest/coverage-v8": "^3.2.4",

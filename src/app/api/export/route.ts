@@ -3,20 +3,38 @@ import { prisma } from "@/lib/db";
 import { parseJob, parseResume } from "@/lib/ats/parse";
 import { buildTailor } from "@/lib/tailor/engine";
 import { documentToExportPayload } from "@/lib/tailor/document";
-import PDFDocument from "pdfkit";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import { renderResumeHtmlFromDocument, renderResumeHtmlFromPayload } from "@/lib/render/resumeHtml";
+import { htmlToPdfBuffer } from "@/lib/render/htmlToPdf";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  HeadingLevel,
+  Tab,
+  ExternalHyperlink,
+  TabStopType,
+} from "docx";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type ExportPayload = {
   name: string;
   targetRole?: string;
   company?: string;
+  contactLine?: string;
   summaryLines: string[];
   skills: string[];
-  bullets: string[];
+  highlightsBullets: string[];
+  experiences?: Array<{ title: string; organization: string; location?: string; dateRange: string; bullets: string[] }>;
+  projects?: Array<{ name: string; dateRange?: string; link?: string; bullets: string[] }>;
+  education?: Array<{ school: string; degree?: string; location?: string; dateRange?: string; details: string[] }>;
+  theme?: { primaryColor: string; accentColor: string; backgroundColor: string };
+  fontFamily?: string;
+  fontSize?: number;
   template: "classic" | "compact";
-  sectionsOrder: Array<"summary" | "skills" | "highlights">;
+  sectionIds?: Array<"header" | "summary" | "highlights" | "experience" | "projects" | "education" | "skills">;
 };
 
 export async function POST(request: NextRequest) {
@@ -27,14 +45,17 @@ export async function POST(request: NextRequest) {
       resumeId,
       document: documentBody,
       exportFormat,
+      theme,
+      fontFamily,
+      fontSize,
       chosenSummary,
       acceptedBullets,
       template,
-      sectionsOrder,
+      sectionIds,
       name: nameOverride,
       summaryLines: summaryLinesOverride,
       skills: skillsOverride,
-      bullets: bulletsOverride,
+      highlightsBullets: highlightsBulletsOverride,
     } = body || {};
 
     if (!jobId || !resumeId) {
@@ -57,18 +78,31 @@ export async function POST(request: NextRequest) {
       });
       payload = {
         name: nameOverride ?? fromDoc.name,
+        contactLine: fromDoc.contactLine,
         targetRole: job.title || undefined,
         company: job.company || undefined,
         summaryLines: summaryLinesOverride ?? fromDoc.summaryLines,
         skills: skillsOverride ?? fromDoc.skills,
-        bullets: bulletsOverride ?? fromDoc.bullets,
+        highlightsBullets: highlightsBulletsOverride ?? fromDoc.highlightsBullets,
+        experiences: fromDoc.experiences,
+        projects: fromDoc.projects,
+        education: fromDoc.education,
+        theme: theme && typeof theme === "object" ? theme : undefined,
+        fontFamily: typeof fontFamily === "string" ? fontFamily : undefined,
+        fontSize: typeof fontSize === "number" ? fontSize : undefined,
         template: template === "compact" ? "compact" : "classic",
-        sectionsOrder:
-          Array.isArray(sectionsOrder) && sectionsOrder.length
-            ? (sectionsOrder.filter((s: string) =>
-                s === "summary" || s === "skills" || s === "highlights"
-              ) as Array<"summary" | "skills" | "highlights">)
-            : ["summary", "skills", "highlights"],
+        sectionIds:
+          Array.isArray(sectionIds) && sectionIds.length
+            ? (sectionIds.filter((s: string) =>
+                s === "header" ||
+                s === "summary" ||
+                s === "highlights" ||
+                s === "experience" ||
+                s === "projects" ||
+                s === "education" ||
+                s === "skills"
+              ) as ExportPayload["sectionIds"])
+            : undefined,
       };
     } else {
       const parsedJob = parseJob(job.description || "", {
@@ -94,14 +128,26 @@ export async function POST(request: NextRequest) {
         company: job.company || undefined,
         summaryLines: summaryLines.slice(0, 2),
         skills,
-        bullets,
+        highlightsBullets: bullets,
+        experiences: [],
+        projects: [],
+        education: [],
+        theme: theme && typeof theme === "object" ? theme : undefined,
+        fontFamily: typeof fontFamily === "string" ? fontFamily : undefined,
+        fontSize: typeof fontSize === "number" ? fontSize : undefined,
         template: template === "compact" ? "compact" : "classic",
-        sectionsOrder:
-          Array.isArray(sectionsOrder) && sectionsOrder.length
-            ? (sectionsOrder.filter((s: string) =>
-                s === "summary" || s === "skills" || s === "highlights"
-              ) as Array<"summary" | "skills" | "highlights">)
-            : ["summary", "skills", "highlights"],
+        sectionIds:
+          Array.isArray(sectionIds) && sectionIds.length
+            ? (sectionIds.filter((s: string) =>
+                s === "header" ||
+                s === "summary" ||
+                s === "highlights" ||
+                s === "experience" ||
+                s === "projects" ||
+                s === "education" ||
+                s === "skills"
+              ) as ExportPayload["sectionIds"])
+            : undefined,
       };
     }
 
@@ -116,8 +162,38 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const pdfBytes = await renderPdf(payload);
-    return new NextResponse(pdfBytes, {
+    if (documentBody && typeof documentBody === "object" && Array.isArray(documentBody.blocks)) {
+      const html = renderResumeHtmlFromDocument(documentBody, {
+        theme: payload.theme,
+        fontFamily: payload.fontFamily,
+        fontSize: payload.fontSize,
+        templateName: typeof body?.templateName === "string" ? body.templateName : undefined,
+      });
+      const bytes = await htmlToPdfBuffer(html, { format: "Letter" });
+      return new NextResponse(Buffer.from(bytes), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="tailored-resume.pdf"`,
+        },
+      });
+    }
+
+    const html = renderResumeHtmlFromPayload(
+      {
+        name: payload.name,
+        contactLine: payload.contactLine,
+        summaryLines: payload.summaryLines,
+        skills: payload.skills,
+        highlightsBullets: payload.highlightsBullets,
+        experiences: payload.experiences,
+        projects: payload.projects,
+        education: payload.education,
+      },
+      { theme: payload.theme, fontFamily: payload.fontFamily, fontSize: payload.fontSize }
+    );
+    const bytes = await htmlToPdfBuffer(html, { format: "Letter" });
+    return new NextResponse(Buffer.from(bytes), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
@@ -125,82 +201,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (e) {
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "Export failed";
+    console.error("Export failed:", e);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
-
-async function renderPdf(input: ExportPayload): Promise<ArrayBuffer> {
-  const doc = new PDFDocument({
-    size: "LETTER",
-    margins:
-      input.template === "compact"
-        ? { top: 40, bottom: 40, left: 40, right: 40 }
-        : { top: 54, bottom: 54, left: 54, right: 54 },
-    info: { Title: "Tailored Resume" },
-  });
-
-  const chunks: Buffer[] = [];
-  doc.on("data", (d) => chunks.push(Buffer.from(d)));
-  const done = new Promise<Buffer>((resolve, reject) => {
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-  });
-
-  doc.font("Helvetica");
-
-  // Header
-  const headingSize = input.template === "compact" ? 16 : 18;
-  const subtitleSize = input.template === "compact" ? 9 : 10;
-
-  doc.fontSize(headingSize).text(input.name || "Resume", { align: "left" });
-  doc.moveDown(0.2);
-  const subtitle = [input.targetRole, input.company].filter(Boolean).join(" — ");
-  if (subtitle) {
-    doc.fontSize(subtitleSize).fillColor("#444").text(`Target: ${subtitle}`, { align: "left" });
-    doc.fillColor("#000");
-  }
-  doc.moveDown(0.8);
-
-  const drawSummary = () => {
-    sectionTitle(doc, "SUMMARY");
-    doc.fontSize(11);
-    for (const l of input.summaryLines) doc.text(l, { lineGap: 2 });
-    doc.moveDown(0.6);
-  };
-
-  const drawSkills = () => {
-    sectionTitle(doc, "SKILLS");
-    doc.fontSize(10).text(input.skills.join(" • "), { lineGap: 2 });
-    doc.moveDown(0.6);
-  };
-
-  const drawHighlights = () => {
-    sectionTitle(doc, "HIGHLIGHTS");
-    doc.fontSize(11);
-    for (const b of input.bullets.slice(0, 12)) {
-      doc.text(`• ${stripTrailingPunct(b)}`, { lineGap: 2 });
-    }
-  };
-
-  const visited = new Set<string>();
-  for (const key of input.sectionsOrder) {
-    if (visited.has(key)) continue;
-    visited.add(key);
-    if (key === "summary") drawSummary();
-    else if (key === "skills") drawSkills();
-    else if (key === "highlights") drawHighlights();
-  }
-
-  doc.end();
-  const pdf = await done;
-  // NextResponse expects a web BodyInit; copy into an ArrayBuffer (not SharedArrayBuffer).
-  const bytes = Uint8Array.from(pdf);
-  return bytes.buffer;
-}
-
-function sectionTitle(doc: PDFKit.PDFDocument, title: string) {
-  doc.font("Helvetica-Bold").fontSize(10).text(title);
-  doc.font("Helvetica").moveDown(0.2);
 }
 
 function stripTrailingPunct(s: string) {
@@ -209,6 +213,7 @@ function stripTrailingPunct(s: string) {
 
 async function renderDocx(input: ExportPayload): Promise<Buffer> {
   const children: Paragraph[] = [];
+  const rightTabTwips = 9360; // ~6.5 inches, works on letter
 
   children.push(
     new Paragraph({
@@ -226,6 +231,7 @@ async function renderDocx(input: ExportPayload): Promise<Buffer> {
   }
   children.push(new Paragraph({ text: "" }));
 
+  // Summary first (not part of template section list yet)
   if (input.summaryLines?.length) {
     children.push(
       new Paragraph({
@@ -239,7 +245,12 @@ async function renderDocx(input: ExportPayload): Promise<Buffer> {
     children.push(new Paragraph({ text: "" }));
   }
 
-  if (input.skills?.length) {
+  // Skills can be ordered by template; for now keep it where it is if selected.
+  const orderedSections = input.sectionIds || ["header", "experience", "projects", "education", "skills"];
+  const skillsFirst = orderedSections.indexOf("skills") !== -1 && orderedSections.indexOf("skills") < orderedSections.indexOf("experience");
+
+  const renderSkills = () => {
+    if (!input.skills?.length) return;
     children.push(
       new Paragraph({
         children: [new TextRun({ text: "SKILLS", bold: true, size: 22 })],
@@ -252,16 +263,18 @@ async function renderDocx(input: ExportPayload): Promise<Buffer> {
       })
     );
     children.push(new Paragraph({ text: "" }));
-  }
+  };
 
-  if (input.bullets?.length) {
+  if (skillsFirst) renderSkills();
+
+  if (input.highlightsBullets?.length) {
     children.push(
       new Paragraph({
         children: [new TextRun({ text: "HIGHLIGHTS", bold: true, size: 22 })],
         heading: HeadingLevel.HEADING_1,
       })
     );
-    for (const b of input.bullets.slice(0, 12)) {
+    for (const b of input.highlightsBullets.slice(0, 12)) {
       children.push(
         new Paragraph({
           children: [new TextRun({ text: `• ${stripTrailingPunct(b)}` })],
@@ -270,6 +283,109 @@ async function renderDocx(input: ExportPayload): Promise<Buffer> {
       );
     }
   }
+
+  if (input.experiences?.length) {
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: "EXPERIENCE", bold: true, size: 22 })],
+        heading: HeadingLevel.HEADING_1,
+      })
+    );
+    for (const e of input.experiences) {
+      const line = [e.title, e.organization].filter(Boolean).join(" — ");
+      const meta = [e.location, e.dateRange].filter(Boolean).join(" | ");
+      children.push(
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: rightTabTwips }],
+          children: [
+            new TextRun({ text: line, bold: true }),
+            new Tab(),
+            new TextRun({ text: meta || "", color: "444444" }),
+          ],
+        })
+      );
+      for (const b of (e.bullets || []).slice(0, 10)) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: stripTrailingPunct(b) })],
+            bullet: { level: 0 },
+          })
+        );
+      }
+      children.push(new Paragraph({ text: "" }));
+    }
+  }
+
+  if (input.projects?.length) {
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: "PROJECTS", bold: true, size: 22 })],
+        heading: HeadingLevel.HEADING_1,
+      })
+    );
+    for (const p of input.projects) {
+      const meta = [p.dateRange, p.link].filter(Boolean).join(" | ");
+      const link = (p.link || "").trim();
+      const metaRuns = link
+        ? [
+            new TextRun({ text: p.dateRange ? `${p.dateRange} | ` : "", color: "444444" }),
+            new ExternalHyperlink({
+              link,
+              children: [new TextRun({ text: link, color: "0000EE", underline: {} })],
+            }),
+          ]
+        : [new TextRun({ text: meta, color: "444444" })];
+      children.push(
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: rightTabTwips }],
+          children: [new TextRun({ text: p.name || "", bold: true }), new Tab(), ...metaRuns],
+        })
+      );
+      for (const b of (p.bullets || []).slice(0, 6)) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: stripTrailingPunct(b) })],
+            bullet: { level: 0 },
+          })
+        );
+      }
+      children.push(new Paragraph({ text: "" }));
+    }
+  }
+
+  if (input.education?.length) {
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: "EDUCATION", bold: true, size: 22 })],
+        heading: HeadingLevel.HEADING_1,
+      })
+    );
+    for (const e of input.education) {
+      const line = [e.school, e.degree].filter(Boolean).join(" — ");
+      const meta = [e.location, e.dateRange].filter(Boolean).join(" | ");
+      children.push(
+        new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: rightTabTwips }],
+          children: [
+            new TextRun({ text: line, bold: true }),
+            new Tab(),
+            new TextRun({ text: meta || "", color: "444444" }),
+          ],
+        })
+      );
+      for (const d of (e.details || []).slice(0, 4)) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: stripTrailingPunct(d) })],
+            bullet: { level: 0 },
+          })
+        );
+      }
+      children.push(new Paragraph({ text: "" }));
+    }
+  }
+
+  if (!skillsFirst) renderSkills();
 
   const doc = new Document({
     sections: [
