@@ -156,10 +156,10 @@ export function parseResume(raw: string): ResumeParsed {
   const cleaned = cleanText(raw);
   const lines = toLines(cleaned);
 
-  // crude bullet extraction
+  // crude bullet extraction – reuse the same bullet heuristics as job parsing
   const bullets = lines
-    .filter((l) => /^[-*]\s+/.test(l))
-    .map((l) => l.replace(/^[-*]\s+/, "").trim())
+    .filter((l) => isBullet(l))
+    .map((l) => stripBulletPrefix(l))
     .filter((b) => b.length >= 12);
 
   // naive split: first half as experience bullets, second half as project bullets
@@ -168,14 +168,14 @@ export function parseResume(raw: string): ResumeParsed {
   const projectBullets = bullets.slice(midpoint);
 
   // headline: first non-empty line
-  const headline = lines[0];
+  const headline = lines.find((l) => l.trim().length > 0);
 
   // summary: first paragraph-ish chunk (until blank line)
   const summaryLines: string[] = [];
   for (const l of cleaned.split("\n")) {
     const t = l.trim();
     if (!t) break;
-    if (/^[-*]\s+/.test(t)) break;
+    if (isBullet(t)) break;
     summaryLines.push(t);
     if (summaryLines.join(" ").length > 500) break;
   }

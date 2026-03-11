@@ -5,7 +5,7 @@ import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { fetchJson } from "@/lib/fetchJson";
 import { JobCard } from "@/components/JobCard";
-import type { Job } from "@prisma/client";
+import type { Job, Resume } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -25,17 +25,36 @@ export default function JobsPage() {
   const [q, setQ] = useState("");
   const [platform, setPlatform] = useState("all");
   const [company, setCompany] = useState("");
+  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [matchResumeId, setMatchResumeId] = useState<string>("");
+  const [sortMode, setSortMode] = useState<"deadline" | "createdAt" | "bestMatch">("deadline");
+  const [scores, setScores] = useState<Record<string, number>>({});
+  const [scoring, setScoring] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch("/api/jobs")
-      .then((r) => fetchJson<Job[]>(r))
-      .then((data) => {
-        if (!cancelled) setJobs(Array.isArray(data) ? data : []);
+    Promise.all([fetch("/api/jobs"), fetch("/api/resumes")])
+      .then(async ([jobsRes, resumesRes]) => {
+        const [jobsData, resumesData] = await Promise.all([
+          fetchJson<Job[]>(jobsRes),
+          fetchJson<Resume[]>(resumesRes),
+        ]);
+        if (!cancelled) {
+          setJobs(Array.isArray(jobsData) ? jobsData : []);
+          const list = Array.isArray(resumesData) ? resumesData : [];
+          setResumes(list);
+          if (!matchResumeId && list[0]?.id) {
+            setMatchResumeId(list[0].id);
+          }
+        }
       })
       .catch(() => {
-        if (!cancelled) setJobs([]);
+        if (!cancelled) {
+          setJobs([]);
+          setResumes([]);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -64,13 +83,61 @@ export default function JobsPage() {
       }
       return true;
     });
-    return list.sort((a, b) => {
-      const ad = a.deadline ? new Date(a.deadline).getTime() : Number.POSITIVE_INFINITY;
-      const bd = b.deadline ? new Date(b.deadline).getTime() : Number.POSITIVE_INFINITY;
-      if (ad !== bd) return ad - bd;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
-  }, [jobs, q, platform, company]);
+    if (sortMode === "bestMatch") {
+      return list
+        .slice()
+        .sort((a, b) => (scores[b.id] ?? 0) - (scores[a.id] ?? 0));
+    }
+    return list
+      .slice()
+      .sort((a, b) => {
+        const ad = a.deadline ? new Date(a.deadline).getTime() : Number.POSITIVE_INFINITY;
+        const bd = b.deadline ? new Date(b.deadline).getTime() : Number.POSITIVE_INFINITY;
+        if (ad !== bd) return ad - bd;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [jobs, q, platform, company, activeStatus, sortMode, scores]);
+
+  async function computeMatchScores() {
+    if (!matchResumeId) return;
+    setScoring(true);
+    setScoreError(null);
+    try {
+      const inColumn = jobs.filter((j) => j.status === activeStatus);
+      const entries = await Promise.all(
+        inColumn.map(async (job) => {
+          try {
+            const res = await fetch("/api/score", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jobId: job.id, resumeId: matchResumeId }),
+            });
+            const body = await fetchJson<any>(res);
+            if (!res.ok) {
+              throw new Error(body.error || "Score failed");
+            }
+            const result = body.result as { overallScore?: number } | undefined;
+            const score =
+              typeof result?.overallScore === "number" && Number.isFinite(result.overallScore)
+                ? Math.max(0, Math.min(100, Math.round(result.overallScore)))
+                : 0;
+            return [job.id, score] as const;
+          } catch {
+            return [job.id, 0] as const;
+          }
+        }),
+      );
+      const next: Record<string, number> = {};
+      for (const [id, score] of entries) {
+        next[id] = score;
+      }
+      setScores(next);
+    } catch (e) {
+      setScoreError(e instanceof Error ? e.message : "Scoring failed");
+    } finally {
+      setScoring(false);
+    }
+  }
 
   async function moveJobToStatus(jobId: string, newStatus: JobStatus) {
     setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: newStatus } : j)));
@@ -136,7 +203,7 @@ export default function JobsPage() {
       </div>
 
       <div className="rounded-xl bg-slate-800/30 border border-slate-700/50 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <label className="block text-xs text-slate-500 mb-1">Search</label>
             <input
@@ -169,6 +236,43 @@ export default function JobsPage() {
               className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Sort & match</label>
+            <div className="flex flex-col gap-2">
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as typeof sortMode)}
+                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              >
+                <option value="deadline">By deadline (soonest first)</option>
+                <option value="createdAt">By created date</option>
+                <option value="bestMatch">By best match score</option>
+              </select>
+              {resumes.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={matchResumeId}
+                    onChange={(e) => setMatchResumeId(e.target.value)}
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-600 text-white text-xs"
+                  >
+                    {resumes.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={computeMatchScores}
+                    disabled={scoring || !matchResumeId}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium"
+                  >
+                    {scoring ? "Scoring…" : "Score tab"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
@@ -187,6 +291,11 @@ export default function JobsPage() {
             Clear filters
           </button>
         </div>
+        {scoreError && (
+          <p className="mt-2 text-xs text-red-400">
+            {scoreError}
+          </p>
+        )}
       </div>
 
       <div
@@ -202,6 +311,7 @@ export default function JobsPage() {
           <JobCard
             key={job.id}
             job={job}
+            matchScore={scores[job.id]}
             onDeleted={(jobId) => setJobs((prev) => prev.filter((j) => j.id !== jobId))}
             onStatusChanged={(jobId, newStatus) =>
               setJobs((prev) =>

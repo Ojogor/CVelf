@@ -9,10 +9,10 @@ import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
-function runExtract(pdfPath: string, cwd: string) {
+function runExtract(pdfPath: string) {
   return new Promise<{ text: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, ["scripts/extract-pdf-text.mjs", pdfPath], {
-      cwd,
+    const scriptPath = path.join(process.cwd(), "scripts", "extract-pdf-text.mjs");
+    const child = spawn(process.execPath, [scriptPath, pdfPath], {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -49,8 +49,7 @@ export async function POST(request: NextRequest) {
 
     let extracted = "";
     if (ext === "pdf") {
-      const cwd = process.cwd();
-      const { text } = await runExtract(filePath, cwd);
+      const { text } = await runExtract(filePath);
       extracted = text || "";
     } else {
       const { value } = await mammoth.extractRawText({ path: filePath });
@@ -63,13 +62,18 @@ export async function POST(request: NextRequest) {
       data: {
         name,
         content: cleaned,
-        filePath,
       },
     });
 
+    // Best-effort cleanup of temporary files; ignore failures.
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+
     return NextResponse.json({ resume, extractedChars: cleaned.length });
   } catch (e) {
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Upload failed" },
+      { status: 500 }
+    );
   }
 }
 

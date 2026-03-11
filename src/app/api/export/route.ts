@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { jobId, resumeId, chosenSummary, acceptedBullets } = body || {};
+    const { jobId, resumeId, chosenSummary, acceptedBullets, template, sectionsOrder } = body || {};
     if (!jobId || !resumeId) {
       return NextResponse.json({ error: "jobId and resumeId are required" }, { status: 400 });
     }
@@ -39,16 +39,23 @@ export async function POST(request: NextRequest) {
 
     const skills = tailor.suggestedSkillOrder.slice(0, 24);
 
-    const pdf = await renderPdf({
+    const pdfBytes = await renderPdf({
       name: resume.name,
       targetRole: job.title,
       company: job.company,
       summaryLines: summaryLines.slice(0, 2),
       skills,
       bullets,
+      template: template === "compact" ? "compact" : "classic",
+      sectionsOrder:
+        Array.isArray(sectionsOrder) && sectionsOrder.length
+          ? (sectionsOrder.filter((s: string) =>
+              s === "summary" || s === "skills" || s === "highlights",
+            ) as Array<"summary" | "skills" | "highlights">)
+          : ["summary", "skills", "highlights"],
     });
 
-    return new NextResponse(pdf, {
+    return new NextResponse(pdfBytes, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
@@ -67,10 +74,15 @@ async function renderPdf(input: {
   summaryLines: string[];
   skills: string[];
   bullets: string[];
-}) {
+  template: "classic" | "compact";
+  sectionsOrder: Array<"summary" | "skills" | "highlights">;
+}): Promise<ArrayBuffer> {
   const doc = new PDFDocument({
     size: "LETTER",
-    margins: { top: 54, bottom: 54, left: 54, right: 54 },
+    margins:
+      input.template === "compact"
+        ? { top: 40, bottom: 40, left: 40, right: 40 }
+        : { top: 54, bottom: 54, left: 54, right: 54 },
     info: { Title: "Tailored Resume" },
   });
 
@@ -83,29 +95,54 @@ async function renderPdf(input: {
 
   doc.font("Helvetica");
 
-  doc.fontSize(18).text(input.name || "Resume", { align: "left" });
+  // Header
+  const headingSize = input.template === "compact" ? 16 : 18;
+  const subtitleSize = input.template === "compact" ? 9 : 10;
+
+  doc.fontSize(headingSize).text(input.name || "Resume", { align: "left" });
   doc.moveDown(0.2);
-  doc.fontSize(10).fillColor("#444").text(`Target: ${input.targetRole} — ${input.company}`, { align: "left" });
+  doc
+    .fontSize(subtitleSize)
+    .fillColor("#444")
+    .text(`Target: ${input.targetRole} — ${input.company}`, { align: "left" });
   doc.fillColor("#000");
   doc.moveDown(0.8);
 
-  sectionTitle(doc, "SUMMARY");
-  doc.fontSize(11);
-  for (const l of input.summaryLines) doc.text(l, { lineGap: 2 });
-  doc.moveDown(0.6);
+  const drawSummary = () => {
+    sectionTitle(doc, "SUMMARY");
+    doc.fontSize(11);
+    for (const l of input.summaryLines) doc.text(l, { lineGap: 2 });
+    doc.moveDown(0.6);
+  };
 
-  sectionTitle(doc, "SKILLS");
-  doc.fontSize(10).text(input.skills.join(" • "), { lineGap: 2 });
-  doc.moveDown(0.6);
+  const drawSkills = () => {
+    sectionTitle(doc, "SKILLS");
+    doc.fontSize(10).text(input.skills.join(" • "), { lineGap: 2 });
+    doc.moveDown(0.6);
+  };
 
-  sectionTitle(doc, "HIGHLIGHTS");
-  doc.fontSize(11);
-  for (const b of input.bullets.slice(0, 12)) {
-    doc.text(`• ${stripTrailingPunct(b)}`, { lineGap: 2 });
+  const drawHighlights = () => {
+    sectionTitle(doc, "HIGHLIGHTS");
+    doc.fontSize(11);
+    for (const b of input.bullets.slice(0, 12)) {
+      doc.text(`• ${stripTrailingPunct(b)}`, { lineGap: 2 });
+    }
+  };
+
+  const visited = new Set<string>();
+  for (const key of input.sectionsOrder) {
+    if (visited.has(key)) continue;
+    visited.add(key);
+    if (key === "summary") drawSummary();
+    else if (key === "skills") drawSkills();
+    else if (key === "highlights") drawHighlights();
   }
 
   doc.end();
-  return await done;
+  const pdf = await done;
+  // NextResponse expects a web BodyInit; copy into an ArrayBuffer (not SharedArrayBuffer).
+  const bytes = Uint8Array.from(pdf);
+  return bytes.buffer;
 }
 
 function sectionTitle(doc: PDFKit.PDFDocument, title: string) {

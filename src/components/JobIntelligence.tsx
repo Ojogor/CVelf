@@ -3,109 +3,25 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Resume } from "@prisma/client";
 import { fetchJson } from "@/lib/fetchJson";
+import { getAiSettings } from "@/lib/ai/clientSettings";
+import type { ScoreResult } from "@/lib/ats/types";
 
-type ScoreApiResponse =
-  | {
-      analysis: {
-        status: "full";
-        evidence: {
-          jobTextLength: number;
-          requiredSkills: number;
-          preferredSkills: number;
-          requirementLines: number;
-          responsibilities: number;
-          domainSignals: number;
-          recognizedSkills: string[];
-          otherTechnicalTerms: string[];
-          domainTerms: string[];
-          softSkills: string[];
-        };
-      };
-      result: {
-        overallScore: number;
-        breakdown: {
-          requiredSkillsMatched: number;
-          requiredSkillsTotal: number;
-          preferredSkillsMatched: number;
-          preferredSkillsTotal: number;
-          requiredSkillsScore: number;
-          preferredSkillsScore: number;
-          experienceScore: number;
-          titleScore: number;
-          semanticScore: number;
-          penalties: number;
-          overallScore: number;
-        };
-        matchedRequiredSkills: string[];
-        missingRequiredSkills: string[];
-        matchedPreferredSkills: string[];
-        missingRequiredSkills: string[];
-        matchedPreferredSkills: string[];
-        missingPreferredSkills: string[];
-        suggestions: string[];
-      };
-    }
-  | {
-      analysis: {
-        status: "partial";
-        note: string;
-        detectedSkills: string[];
-        overlapSkills: string[];
-        preliminaryFit: "Good" | "Maybe" | "Unclear";
-        evidence: {
-          jobTextLength: number;
-          requiredSkills: number;
-          preferredSkills: number;
-          requirementLines: number;
-          responsibilities: number;
-          domainSignals: number;
-          recognizedSkills: string[];
-          otherTechnicalTerms: string[];
-          domainTerms: string[];
-          softSkills: string[];
-        };
-      };
-      extracted: {
-        detectedSkills: string[];
-        possibleOverlapSkills: string[];
-        responsibilities: string[];
-      };
-    }
-  | {
-      analysis: {
-        status: "insufficient";
-        note: string;
-        detectedSkills: string[];
-        evidence: {
-          jobTextLength: number;
-          requiredSkills: number;
-          preferredSkills: number;
-          requirementLines: number;
-          responsibilities: number;
-          domainSignals: number;
-          recognizedSkills: string[];
-          otherTechnicalTerms: string[];
-          domainTerms: string[];
-          softSkills: string[];
-        };
-      };
-      extracted: {
-        detectedSkills: string[];
-        requiredSkills: string[];
-        preferredSkills: string[];
-        responsibilities: string[];
-      };
-    };
+type JobFitAi = {
+  score: number;
+  confidence: "low" | "medium" | "high";
+  explanation: string;
+  strong: string[];
+  partial: string[];
+  missing: string[];
+  suggestions: string[];
+};
 
 export function JobIntelligence({ jobId }: { jobId: string }) {
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [resumeId, setResumeId] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<ScoreApiResponse | null>(null);
+  const [data, setData] = useState<JobFitAi | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [requirementsText, setRequirementsText] = useState("");
-  const [savingReq, setSavingReq] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -118,7 +34,7 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
 
   const selectedResume = useMemo(
     () => resumes.find((r) => r.id === resumeId),
-    [resumes, resumeId]
+    [resumes, resumeId],
   );
 
   async function run() {
@@ -126,48 +42,119 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/score", {
+      const ai = getAiSettings();
+      const payload: { jobId: string; resumeId: string; apiKey?: string } = { jobId, resumeId };
+      if (ai.provider === "gemini" && ai.apiKey) payload.apiKey = ai.apiKey;
+
+      const scoreRes = await fetch("/api/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, resumeId }),
+        body: JSON.stringify(payload),
       });
-      const body = await fetchJson<any>(res);
-      if (!res.ok) throw new Error(body.error || "Score failed");
-      setData(body as ScoreApiResponse);
+      const scoreBody = await fetchJson<any>(scoreRes);
+      if (!scoreRes.ok) {
+        throw new Error(scoreBody?.error || "Scoring failed");
+      }
+      if (scoreBody?.ok === false && typeof scoreBody?.error === "string") {
+        throw new Error(scoreBody.error);
+      }
+
+      const analysis = scoreBody.analysis as
+        | { status: "full" | "partial" | "insufficient"; note?: string; detectedSkills?: string[]; aiExplanation?: string; aiConfidence?: "low" | "medium" | "high" }
+        | undefined;
+
+      if (scoreBody.result) {
+        const result = scoreBody.result as ScoreResult;
+        const breakdown = result.breakdown;
+        const matchedSkills = [
+          ...result.matchedRequiredSkills,
+          ...result.matchedPreferredSkills,
+        ];
+        const missingSkills = [
+          ...result.missingRequiredSkills,
+          ...result.missingPreferredSkills,
+        ];
+
+        const explanationLines: string[] = [];
+        if (analysis?.aiExplanation?.trim()) {
+          explanationLines.push(analysis.aiExplanation.trim());
+        } else {
+          explanationLines.push(
+            "Local hybrid score combining required/preferred skills, title alignment, experience bullets, and semantic match.",
+          );
+          explanationLines.push(
+            `Required skills coverage: ${breakdown.requiredSkillsMatched}/${breakdown.requiredSkillsTotal}.`,
+          );
+          explanationLines.push(
+            `Semantic relevance: ${breakdown.semanticScore}/18; penalties: ${breakdown.penalties}.`,
+          );
+        }
+        if (analysis?.note && !analysis?.aiExplanation) explanationLines.push(analysis.note);
+        if (analysis?.status && analysis.status !== "full" && !analysis?.aiExplanation) {
+          explanationLines.push(
+            "Note: score based on partial local analysis; enrich job requirements for an even more accurate match.",
+          );
+        }
+
+        const confidence: JobFitAi["confidence"] =
+          (analysis?.aiConfidence === "low" || analysis?.aiConfidence === "medium" || analysis?.aiConfidence === "high")
+            ? analysis.aiConfidence
+            : breakdown.semanticScore >= 12 && breakdown.penalties <= 4
+              ? "high"
+              : breakdown.semanticScore <= 4 || breakdown.penalties >= 12
+                ? "low"
+                : "medium";
+
+        setData({
+          score: Math.max(0, Math.min(100, Number(result.overallScore) || 0)),
+          confidence,
+          explanation: explanationLines.join(" "),
+          strong: matchedSkills.slice(0, 16),
+          partial: (analysis?.detectedSkills || []).filter(
+            (s) => !matchedSkills.includes(s) && !missingSkills.includes(s),
+          ),
+          missing: missingSkills.slice(0, 16),
+          suggestions: result.suggestions.slice(0, 8),
+        });
+        return;
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Score failed");
+      setError(e instanceof Error ? e.message : "Job fit failed");
     } finally {
       setLoading(false);
     }
   }
 
-  async function saveRequirements() {
-    if (!requirementsText.trim()) return;
-    setSavingReq(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/jobs/${jobId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parsedRequirements: requirementsText.trim() }),
-      });
-      const body = await fetchJson<any>(res);
-      if (!res.ok) throw new Error(body.error || "Save failed");
-      setPasteOpen(false);
-      await run();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSavingReq(false);
+  // Auto-run when resume changes so the match is always for the current resume.
+  useEffect(() => {
+    if (!resumeId) return;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeId]);
+
+  // Listen for global "Refine with AI" from the job detail page.
+  useEffect(() => {
+    function handleGlobalRefine(event: Event) {
+      const anyEvent = event as CustomEvent<{ jobId?: string }>;
+      const targetJobId = anyEvent.detail?.jobId;
+      if (targetJobId && targetJobId !== jobId) return;
+      if (!resumeId || loading) return;
+      void run();
     }
-  }
+    if (typeof window !== "undefined") {
+      window.addEventListener("jtp-ai-refine-all", handleGlobalRefine as EventListener);
+      return () => window.removeEventListener("jtp-ai-refine-all", handleGlobalRefine as EventListener);
+    }
+  }, [jobId, resumeId, loading]);
 
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold">Job Intelligence</h2>
-          <p className="text-xs text-slate-400">Conservative analysis based on extracted evidence.</p>
+          <h2 className="font-semibold">Job Fit (AI)</h2>
+          <p className="text-xs text-slate-400">
+            Uses your Experience Bank and this posting to compute an AI-backed match score and concrete edits.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -187,7 +174,7 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
             disabled={!resumeId || loading}
             className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium"
           >
-            {loading ? "Scoring…" : "Score"}
+            {loading ? "Scoring…" : "Re-score"}
           </button>
         </div>
       </div>
@@ -200,313 +187,90 @@ export function JobIntelligence({ jobId }: { jobId: string }) {
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
-      {data?.analysis.status === "insufficient" && (
+      {data && (
         <div className="space-y-3">
-          <div className="rounded-lg border border-slate-700/50 bg-slate-800/20 p-3">
-            <p className="text-sm font-semibold">Insufficient job detail</p>
-            <p className="text-xs text-slate-400 mt-1">{data.analysis.note}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setPasteOpen((v) => !v)}
-                className="px-3 py-2 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800/40 text-sm"
-              >
-                Paste Requirements Section
-              </button>
-            </div>
-          </div>
-
-          {(data.analysis.evidence.recognizedSkills.length > 0 ||
-            data.analysis.evidence.otherTechnicalTerms.length > 0) && (
-            <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3 space-y-2">
-              <p className="text-xs text-slate-400">Signals we could see (not enough for a score):</p>
-              {data.analysis.evidence.recognizedSkills.length > 0 && (
-                <div>
-                  <p className="text-[11px] text-slate-400 mb-1">Recognized technical skills</p>
-                  <div className="flex flex-wrap gap-2">
-                    {data.analysis.evidence.recognizedSkills.slice(0, 18).map((s) => (
-                      <span
-                        key={s}
-                        className="text-xs px-2 py-0.5 rounded bg-slate-700/60 border border-slate-600 text-slate-100"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {data.analysis.evidence.otherTechnicalTerms.length > 0 && (
-                <div>
-                  <p className="text-[11px] text-slate-400 mb-1">Other detected technical terms</p>
-                  <div className="flex flex-wrap gap-2">
-                    {data.analysis.evidence.otherTechnicalTerms.slice(0, 18).map((s) => (
-                      <span
-                        key={s}
-                        className="text-xs px-2 py-0.5 rounded bg-slate-800/70 border border-slate-700 text-slate-200"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(data.analysis.evidence.domainTerms.length > 0 ||
-                data.analysis.evidence.softSkills.length > 0) && (
-                <p className="text-[11px] text-slate-500 mt-1">
-                  We ignore vague domain/soft-skill phrases for strict scoring to avoid overclaiming.
-                </p>
-              )}
-            </div>
-          )}
-
-          {pasteOpen && (
-            <div className="rounded-lg border border-slate-700/50 bg-slate-900/30 p-3 space-y-2">
-              <p className="text-xs text-slate-400">
-                Paste only the Requirements/Qualifications text. We’ll use it for analysis without replacing the full job description.
-              </p>
-              <textarea
-                value={requirementsText}
-                onChange={(e) => setRequirementsText(e.target.value)}
-                rows={8}
-                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm resize-y"
-                placeholder="Paste Requirements/Qualifications here…"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={saveRequirements}
-                  disabled={savingReq || !requirementsText.trim()}
-                  className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium"
-                >
-                  {savingReq ? "Saving…" : "Save & Re-analyze"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPasteOpen(false)}
-                  className="px-3 py-2 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800/40 text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {data?.analysis.status === "partial" && (
-        <div className="space-y-3">
-          <div className="rounded-lg border border-sky-700/40 bg-sky-950/15 p-3">
-            <p className="text-sm font-semibold">Partial analysis</p>
-            <p className="text-xs text-slate-400 mt-1">{data.analysis.note}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="text-xs px-2 py-0.5 rounded bg-slate-800/60 border border-slate-700/50 text-slate-200">
-                Preliminary fit: {data.analysis.preliminaryFit}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPasteOpen((v) => !v)}
-                className="px-3 py-2 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800/40 text-sm"
-              >
-                Paste Requirements Section
-              </button>
-            </div>
-          </div>
-
-          {data.analysis.detectedSkills?.length > 0 && (
-            <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3">
-              <p className="text-xs text-slate-400 mb-2">Detected skills</p>
-              <div className="flex flex-wrap gap-2">
-                {data.analysis.detectedSkills.slice(0, 16).map((s) => (
-                  <span key={s} className="text-xs px-2 py-0.5 rounded bg-slate-700/60 text-slate-200">
-                    {s}
-                  </span>
-                ))}
-              </div>
-              {data.analysis.overlapSkills?.length > 0 && (
-                <p className="text-xs text-slate-500 mt-2">
-                  Overlap: <span className="text-slate-300">{data.analysis.overlapSkills.slice(0, 10).join(", ")}</span>
-                </p>
-              )}
-            </div>
-          )}
-
-          {(data.analysis.evidence.otherTechnicalTerms.length > 0 ||
-            data.analysis.evidence.domainTerms.length > 0) && (
-            <div className="rounded-lg bg-slate-900/40 border border-slate-700/50 p-3 space-y-2">
-              {data.analysis.evidence.otherTechnicalTerms.length > 0 && (
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Other detected technical terms (not counted as core skills)</p>
-                  <div className="flex flex-wrap gap-2">
-                    {data.analysis.evidence.otherTechnicalTerms.slice(0, 16).map((s) => (
-                      <span
-                        key={s}
-                        className="text-xs px-2 py-0.5 rounded bg-slate-800/70 border border-slate-700 text-slate-200"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {data.analysis.evidence.domainTerms.length > 0 && (
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Domain / context signals</p>
-                  <div className="flex flex-wrap gap-2">
-                    {data.analysis.evidence.domainTerms.slice(0, 12).map((s) => (
-                      <span
-                        key={s}
-                        className="text-xs px-2 py-0.5 rounded bg-slate-900/70 border border-slate-700 text-slate-200"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <p className="text-[11px] text-slate-500">
-                Low-confidence / culture-only phrases are shown for context but excluded from strict scoring.
-              </p>
-            </div>
-          )}
-
-          {pasteOpen && (
-            <div className="rounded-lg border border-slate-700/50 bg-slate-900/30 p-3 space-y-2">
-              <p className="text-xs text-slate-400">
-                Paste only the Requirements/Qualifications text. We’ll use it for analysis without replacing the full job description.
-              </p>
-              <textarea
-                value={requirementsText}
-                onChange={(e) => setRequirementsText(e.target.value)}
-                rows={8}
-                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm resize-y"
-                placeholder="Paste Requirements/Qualifications here…"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={saveRequirements}
-                  disabled={savingReq || !requirementsText.trim()}
-                  className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium"
-                >
-                  {savingReq ? "Saving…" : "Save & Re-analyze"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPasteOpen(false)}
-                  className="px-3 py-2 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-800/40 text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          <p className="text-xs text-slate-500">
-            Tip: paste the Requirements/Qualifications section to unlock a full score.
-          </p>
-        </div>
-      )}
-
-      {data?.analysis.status === "full" && (
-        <div className="space-y-3">
-          <div className="flex items-end justify-between">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-slate-400 text-xs">Overall match</p>
-              <p className="text-3xl font-bold">{data.result.overallScore}/100</p>
+              <p className="text-xs text-slate-400">Overall match</p>
+              <p className="text-3xl font-bold text-slate-100">{data.score}/100</p>
+              <p className="mt-1 text-xs text-slate-300 whitespace-pre-line">{data.explanation}</p>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-slate-400">Required skills</p>
-              <p className="text-sm">
-                {data.result.breakdown.requiredSkillsMatched}/{data.result.breakdown.requiredSkillsTotal}
+            <div className="text-right text-xs text-slate-400 space-y-1">
+              <p>
+                Confidence:{" "}
+                <span className="text-slate-100">
+                  {data.confidence === "high"
+                    ? "High"
+                    : data.confidence === "low"
+                      ? "Cautious"
+                      : "Medium"}
+                </span>
               </p>
-              <p className="text-xs text-slate-400 mt-1">Preferred skills</p>
-              <p className="text-sm">
-                {data.result.breakdown.preferredSkillsMatched}/{data.result.breakdown.preferredSkillsTotal}
+              <p className="text-slate-400">
+                Source: Experience Bank bullets + resume skills (no invented data).
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg bg-slate-800/40 border border-slate-700/50 p-3">
-              <p className="text-xs text-slate-400 mb-1">Strong matches</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3">
+              <p className="text-xs text-slate-400 mb-2">Clear strengths</p>
               <div className="flex flex-wrap gap-2">
-                {data.result.matchedRequiredSkills.slice(0, 10).map((s) => (
-                  <span key={s} className="text-xs px-2 py-0.5 rounded bg-emerald-900/30 border border-emerald-700/40 text-emerald-200">
+                {data.strong.slice(0, 10).map((s) => (
+                  <span
+                    key={s}
+                    className="text-xs px-2 py-0.5 rounded bg-emerald-900/20 border border-emerald-700/40 text-emerald-200"
+                  >
                     {s}
                   </span>
                 ))}
-                {data.result.matchedPreferredSkills.slice(0, 6).map((s) => (
-                  <span key={s} className="text-xs px-2 py-0.5 rounded bg-emerald-900/10 border border-emerald-700/30 text-emerald-200">
-                    {s}
-                  </span>
-                ))}
-                {!data.result.matchedRequiredSkills.length && !data.result.matchedPreferredSkills.length && (
-                  <p className="text-xs text-slate-500">No clear matches extracted.</p>
+                {data.strong.length === 0 && (
+                  <p className="text-xs text-slate-500">No strong, clearly-matched skills detected yet.</p>
                 )}
               </div>
             </div>
-
-            <div className="rounded-lg bg-slate-800/40 border border-slate-700/50 p-3">
-              <p className="text-xs text-slate-400 mb-1">Missing must-haves</p>
-              <div className="flex flex-wrap gap-2">
-                {data.result.missingRequiredSkills.slice(0, 12).map((s) => (
-                  <span key={s} className="text-xs px-2 py-0.5 rounded bg-red-900/20 border border-red-700/40 text-red-200">
+            <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3 space-y-1">
+              <p className="text-xs text-slate-400 mb-1">Key gaps and partial matches</p>
+              <div className="flex flex-wrap gap-2 text-xs">
+                {data.missing.slice(0, 8).map((s) => (
+                  <span
+                    key={`miss-${s}`}
+                    className="px-2 py-0.5 rounded bg-red-900/25 border border-red-700/50 text-red-200"
+                  >
                     {s}
                   </span>
                 ))}
-                {!data.result.missingRequiredSkills.length && (
-                  <p className="text-xs text-slate-500">No missing required skills detected.</p>
+                {data.partial.slice(0, 8).map((s) => (
+                  <span
+                    key={`part-${s}`}
+                    className="px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-slate-200"
+                  >
+                    {s}
+                  </span>
+                ))}
+                {data.missing.length + data.partial.length === 0 && (
+                  <p className="text-xs text-slate-500">
+                    No obvious stack gaps; focus on clarity, impact, and tailoring your bullets.
+                  </p>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3">
-            <p className="text-xs text-slate-400 mb-2">Fix before applying</p>
+          <div className="rounded-lg bg-slate-800/30 border border-slate-700/50 p-3 space-y-2">
+            <p className="text-xs text-slate-400 mb-1">What to change in your resume</p>
             <ul className="list-disc pl-5 space-y-1 text-sm text-slate-200">
-              {data.result.suggestions.slice(0, 6).map((s, i) => (
+              {data.suggestions.slice(0, 6).map((s, i) => (
                 <li key={i}>{s}</li>
               ))}
+              {data.suggestions.length === 0 && (
+                <li>
+                  Emphasize concrete impact (metrics, scale, stack) in 3–5 of your strongest bullets and mirror the
+                  most important job requirements.
+                </li>
+              )}
             </ul>
           </div>
-
-          {(data.analysis.evidence.recognizedSkills.length > 0 ||
-            data.analysis.evidence.otherTechnicalTerms.length > 0 ||
-            data.analysis.evidence.domainTerms.length > 0) && (
-            <div className="rounded-lg bg-slate-900/40 border border-slate-700/50 p-3 space-y-2">
-              <p className="text-xs text-slate-400 mb-1">How we interpreted this posting</p>
-              {data.analysis.evidence.recognizedSkills.length > 0 && (
-                <p className="text-[11px] text-slate-300">
-                  Recognized technical skills used for scoring:{" "}
-                  <span className="text-slate-100">
-                    {data.analysis.evidence.recognizedSkills.slice(0, 18).join(", ")}
-                  </span>
-                  .
-                </p>
-              )}
-              {data.analysis.evidence.otherTechnicalTerms.length > 0 && (
-                <p className="text-[11px] text-slate-300">
-                  Other detected technical terms (not all scored):{" "}
-                  <span className="text-slate-100">
-                    {data.analysis.evidence.otherTechnicalTerms.slice(0, 18).join(", ")}
-                  </span>
-                  .
-                </p>
-              )}
-              {data.analysis.evidence.domainTerms.length > 0 && (
-                <p className="text-[11px] text-slate-300">
-                  Domain/context signals:{" "}
-                  <span className="text-slate-100">
-                    {data.analysis.evidence.domainTerms.slice(0, 12).join(", ")}
-                  </span>
-                  .
-                </p>
-              )}
-              <p className="text-[11px] text-slate-500">
-                The score only uses high/medium-confidence technical signals; vague culture language is ignored so the match stays honest.
-              </p>
-            </div>
-          )}
         </div>
       )}
     </div>

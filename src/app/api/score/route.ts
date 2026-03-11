@@ -3,13 +3,46 @@ import { prisma } from "@/lib/db";
 import { parseJob, parseResume } from "@/lib/ats/parse";
 import { scoreHybrid } from "@/lib/ats/score";
 import { analyzeJobSignals } from "@/lib/ats/skills";
+import type { ScoreResult } from "@/lib/ats/types";
+import { getGeminiApiKey, scoreJobFit } from "@/lib/ai/tasks";
 
 export const runtime = "nodejs";
+
+/** Map AI job_fit_score output to ScoreResult for UI compatibility. */
+function aiScoreToResult(ai: { score: number; strong: string[]; partial: string[]; missing: string[]; suggestions: string[] }): ScoreResult {
+  const raw = Number(ai.score) || 0;
+  // AI often returns 0–1; scale to 0–100 when so
+  const score = raw <= 1 && raw >= 0 ? Math.round(raw * 100) : Math.round(raw);
+  const clamped = Math.max(0, Math.min(100, score));
+  return {
+    overallScore: clamped,
+    breakdown: {
+      requiredSkillsScore: 0,
+      preferredSkillsScore: 0,
+      experienceScore: 0,
+      titleScore: 0,
+      semanticScore: 0,
+      penalties: 0,
+      overallScore: clamped,
+      requiredSkillsMatched: ai.strong.length,
+      requiredSkillsTotal: ai.strong.length + ai.missing.length,
+      preferredSkillsMatched: ai.partial.length,
+      preferredSkillsTotal: ai.partial.length,
+    },
+    matchedRequiredSkills: ai.strong,
+    missingRequiredSkills: ai.missing,
+    matchedPreferredSkills: ai.partial,
+    missingPreferredSkills: [],
+    suggestions: ai.suggestions.slice(0, 10),
+    parsed: { job: null as any, resume: null as any },
+  };
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { jobId, resumeId, jobText, resumeText } = body || {};
+    const { jobId, resumeId, jobText, resumeText, apiKey: bodyApiKey } = body || {};
+    const apiKey = getGeminiApiKey(bodyApiKey);
 
     let jobRaw: string | null = jobText || null;
     let resumeRaw: string | null = resumeText || null;
@@ -42,33 +75,30 @@ export async function POST(request: NextRequest) {
         ? `${jobRaw}\n\nRequirements/Qualifications (pasted):\n${jobParsedRequirements}`
         : jobRaw;
 
+    if (apiKey) {
+      const aiResult = await scoreJobFit(apiKey, combinedJobText, resumeRaw);
+      if (aiResult.ok) {
+        const analysis = {
+          status: "full" as const,
+          note: "AI-backed job fit score.",
+          evidence: null as any,
+          detectedSkills: [...aiResult.data.strong, ...aiResult.data.partial],
+          aiExplanation: aiResult.data.explanation,
+          aiConfidence: aiResult.data.confidence,
+        };
+        const result = aiScoreToResult(aiResult.data);
+        return NextResponse.json({ analysis, result });
+      }
+      // Fall through to local scoring on AI failure
+    }
+
     const parsedJob = parseJob(combinedJobText, jobMeta);
     const parsedResume = parseResume(resumeRaw);
     const analysis = computeAnalysisStatus(parsedJob.cleaned, parsedJob, parsedResume);
-
-    if (analysis.status === "insufficient") {
-      return NextResponse.json({
-        analysis,
-        extracted: {
-          detectedSkills: analysis.detectedSkills,
-          requiredSkills: parsedJob.skillsRequired,
-          preferredSkills: parsedJob.skillsPreferred,
-          responsibilities: parsedJob.responsibilities.slice(0, 8),
-        },
-      });
+    if (!apiKey) {
+      const a = analysis as { note?: string };
+      a.note = (a.note || "") + " Add your Gemini API key in Settings (stored locally) for AI-backed scoring.";
     }
-
-    if (analysis.status === "partial") {
-      return NextResponse.json({
-        analysis,
-        extracted: {
-          detectedSkills: analysis.detectedSkills,
-          possibleOverlapSkills: analysis.overlapSkills,
-          responsibilities: parsedJob.responsibilities.slice(0, 8),
-        },
-      });
-    }
-
     const result = scoreHybrid(parsedJob, parsedResume);
     return NextResponse.json({ analysis, result });
   } catch (e) {
@@ -143,15 +173,20 @@ function computeAnalysisStatus(jobText: string, parsedJob: any, parsedResume: an
     evidence.jobTextLength >= 700;
 
   if (hasStructuredReq) {
+    const fit: "Good" | "Maybe" | "Unclear" =
+      overlapSkills.length >= 4 ? "Good" : overlapSkills.length >= 2 ? "Maybe" : "Unclear";
     return {
       status: "full",
+      note: "Structured requirements detected. Providing a full numeric score based on skills, bullets, and semantic alignment.",
       evidence,
       detectedSkills,
+      overlapSkills,
+      preliminaryFit: fit,
     };
   }
 
   if (hasSomeSignals) {
-    const fit =
+    const fit: "Good" | "Maybe" | "Unclear" =
       overlapSkills.length >= 4 ? "Good" : overlapSkills.length >= 2 ? "Maybe" : "Unclear";
     return {
       status: "partial",

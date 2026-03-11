@@ -35,6 +35,7 @@ export default function DashboardClient() {
   const [jobText, setJobText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importNote, setImportNote] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetch("/api/resumes"), fetch("/api/jobs")])
@@ -58,15 +59,43 @@ export default function DashboardClient() {
     if (!url.trim()) return;
     setSaving(true);
     setError(null);
+    setImportNote(null);
     try {
+      const importRes = await fetch("/api/jobs/import-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const imported = await fetchJson<any>(importRes);
+      if (!importRes.ok || imported?.ok === false) {
+        const msg =
+          (imported && typeof imported.error === "string" && imported.error) ||
+          "Could not import this URL. Paste the job description instead.";
+        setError(msg);
+        setImportNote("Tip: copy/paste the Requirements/Qualifications section for best results.");
+        return;
+      }
+
+      const extractedText = String(imported?.text || "").trim();
+      if (!extractedText) {
+        setError("Imported page returned no readable text. Paste the job description instead.");
+        setImportNote("Tip: copy/paste the Requirements/Qualifications section for best results.");
+        return;
+      }
+
+      setJobText(extractedText);
+      setImportNote("Imported text from the URL. Review/edit if needed, then it will be saved with the job.");
+
+      const titleFromTitleTag = typeof imported?.title === "string" ? imported.title.trim() : "";
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: "New job (from link)",
+          title: titleFromTitleTag || "New job (from link)",
           company: "Unknown",
           url: url.trim(),
           platform: detectPlatform(url),
+          description: extractedText,
           status: "interested",
         }),
       });
@@ -147,6 +176,7 @@ export default function DashboardClient() {
             >
               {saving ? "Saving…" : "Save job"}
             </button>
+            {importNote && <p className="text-xs text-slate-400">{importNote}</p>}
           </div>
 
           <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-4 space-y-3">

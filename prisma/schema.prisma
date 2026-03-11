@@ -54,3 +54,76 @@ model Application {
   @@unique([jobId, resumeId])
 }
 
+model CareerProfile {
+  id        String   @id @default(cuid())
+  fullName  String
+  email     String
+  phone     String?
+  city      String?
+  region    String?
+  country   String?
+  headline  String?
+  linkedin  String?
+  github    String?
+  website   String?
+  pronouns  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MasterExperience {
+  id                String             @id @default(cuid())
+  /// Type of experience block: job, internship, project, course, certification.
+  type              String             @default("job")
+  organization      String
+  /// Normalized organization name for grouping.
+  normalizedCompany String
+  title             String
+  location          String?
+  organizationUrl   String?
+  startDate         String?
+  endDate           String?
+  current           Boolean            @default(false)
+  /// Position for drag-and-drop ordering.
+  position          Int                @default(0)
+  /// Comma-separated canonical skills for quick display/search.
+  skills            String?
+  /// Comma-separated resume IDs or external source IDs this came from.
+  sourceResumeIds   String?
+  bullets           ExperienceBullet[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model ExperienceBullet {
+  id             String           @id @default(cuid())
+  experienceId   String
+  experience     MasterExperience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+  text           String
+  /// Optional tags like: frontend, backend, leadership, sql, etc.
+  tags           String?
+  /// Raw metrics snippets, comma-separated.
+  metrics        String?
+  /// Raw tools/tech, comma-separated.
+  tools          String?
+  /// 0–1, heuristic or AI-based scoring.
+  confidence     Float?
+  /// Position within the parent experience for drag-and-drop ordering.
+  position       Int              @default(0)
+  sourceResumeId String?
+  sourceSection  String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model GeneratedResume {
+  id           String   @id @default(cuid())
+  name         String
+  targetJobId  String?
+  template     String
+  /// JSON-serialized ResumeAssembly payload used for export.
+  assemblyJson String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+

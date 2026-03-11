@@ -65,6 +65,18 @@ function inferCompanyFromBlock(text) {
   return "";
 }
 
+function cleanJobTitleText(raw) {
+  let t = (raw || "").trim();
+  if (!t) return "";
+  const suffixes = [
+    /\s*[-–—]\s*job\s*post(ing)?$/i,
+    /\s*[-–—]\s*job\s*description$/i,
+    /\s*[-–—]\s*careers?\b.*$/i,
+  ];
+  for (const rx of suffixes) t = t.replace(rx, "").trim();
+  return t;
+}
+
 function extractThisJob(includeText = true) {
   const url = location.href;
   const platform = detectPlatform(url);
@@ -154,11 +166,12 @@ function extractThisJob(includeText = true) {
         ? indeedDesc || genericDesc
         : genericDesc;
 
-  const title =
+  const rawTitle =
     pickMeta("og:title") ||
     pickMeta("twitter:title") ||
     (document.querySelector("h1")?.innerText || "").trim() ||
     (document.title || "Job posting").trim();
+  const title = cleanJobTitleText(rawTitle) || "Job posting";
 
   const company =
     (platform === "Indeed" ? (document.querySelector("[data-testid='inlineHeader-companyName']")?.innerText || "").trim() : "") ||
@@ -210,7 +223,9 @@ function extractJobsFromPage(limit = 20) {
       a.closest("article") ||
       a.closest("div");
 
-    const title = normalizeText(a.innerText || a.getAttribute("aria-label") || document.title || "").slice(0, 140) || "Job posting";
+    const title = cleanJobTitleText(
+      normalizeText(a.innerText || a.getAttribute("aria-label") || document.title || ""),
+    ).slice(0, 140) || "Job posting";
     const cardText = closestText(card, 12000);
 
     let company = "Unknown";

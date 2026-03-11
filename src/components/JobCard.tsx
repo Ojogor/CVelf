@@ -11,10 +11,12 @@ export function JobCard({
   job,
   onDeleted,
   onStatusChanged,
+  matchScore,
 }: {
   job: Job;
   onDeleted?: (jobId: string) => void;
   onStatusChanged?: (jobId: string, newStatus: string) => void;
+  matchScore?: number;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,10 +67,17 @@ export function JobCard({
               <GripVertical className="w-4 h-4" />
             </button>
 
-            <Link href={`/jobs/${job.id}`} className="block min-w-0 flex-1">
-            <p className="font-medium text-sm truncate">{job.title}</p>
-            <p className="text-xs text-slate-500 truncate">{job.company}</p>
-            </Link>
+            <div className="flex items-start justify-between gap-2 min-w-0 flex-1">
+              <Link href={`/jobs/${job.id}`} className="block min-w-0 flex-1">
+                <p className="font-medium text-sm truncate">{job.title}</p>
+                <p className="text-xs text-slate-500 truncate">{job.company}</p>
+              </Link>
+              {typeof matchScore === "number" && (
+                <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-200 shrink-0">
+                  {Math.round(matchScore)}/100
+                </span>
+              )}
+            </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {job.url && (

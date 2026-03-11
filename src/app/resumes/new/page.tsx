@@ -51,28 +51,37 @@ export default function NewResumePage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Add resume</h1>
-
-      <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
-        <label className="block text-sm text-slate-400">Name</label>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g., SWE - General"
-          className="w-full px-4 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white"
-        />
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Add resume</h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Create a master resume once, then reuse and tailor it for each job.
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-3 space-y-2 w-full md:w-64">
+          <label className="block text-xs text-slate-400">Name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g., SWE – General"
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm"
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
           <h2 className="font-semibold">Paste text</h2>
+          <p className="text-xs text-slate-400">
+            Best if you already have a resume in another tool. Paste the full text here.
+          </p>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={12}
             placeholder="Paste your resume text here…"
-            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white resize-y"
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white resize-y text-sm"
           />
           <button
             type="button"
@@ -86,6 +95,9 @@ export default function NewResumePage() {
 
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
           <h2 className="font-semibold">Upload PDF or DOCX</h2>
+          <p className="text-xs text-slate-400">
+            Upload an existing resume. We’ll extract the text so you can reuse and tailor it.
+          </p>
           <input
             type="file"
             accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
@@ -101,7 +113,7 @@ export default function NewResumePage() {
             {loading ? "Uploading…" : "Upload file"}
           </button>
           <p className="text-xs text-slate-500">
-            If extraction looks wrong, paste the text as a fallback.
+            If extraction looks wrong, you can always paste or edit the text later.
           </p>
         </div>
       </div>

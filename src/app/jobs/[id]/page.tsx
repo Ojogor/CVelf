@@ -9,6 +9,8 @@ import { JobEditorPanel } from "@/components/JobEditorPanel";
 import { JobIntelligence } from "@/components/JobIntelligence";
 import { ResumeTailor } from "@/components/ResumeTailor";
 import { AddApplicationRecord } from "@/components/AddApplicationRecord";
+import { CoverLetterAssistant } from "@/components/CoverLetterAssistant";
+import { getAiSettings } from "@/lib/ai/clientSettings";
 
 type JobPostingParsed = {
   overview: {
@@ -36,7 +38,9 @@ export default function JobDetailPage() {
   const [reqPasteOpen, setReqPasteOpen] = useState(false);
   const [requirementsText, setRequirementsText] = useState("");
   const [savingReq, setSavingReq] = useState(false);
-  const [tab, setTab] = useState<"posting" | "intelligence" | "tailor" | "applications">("posting");
+  const [tab, setTab] = useState<"posting" | "documents" | "applications">("posting");
+  const [aiExtracting, setAiExtracting] = useState(false);
+  const [docMode, setDocMode] = useState<"resume" | "cover">("resume");
 
   useEffect(() => {
     (async () => {
@@ -53,7 +57,7 @@ export default function JobDetailPage() {
   if (!job) return <p className="text-slate-400">Loading…</p>;
 
   async function saveRequirements() {
-    if (!requirementsText.trim()) return;
+    if (!job || !requirementsText.trim()) return;
     setSavingReq(true);
     setError(null);
     try {
@@ -73,6 +77,74 @@ export default function JobDetailPage() {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSavingReq(false);
+    }
+  }
+
+  async function aiRefineAll() {
+    if (!job?.description) {
+      setError("No job description available to extract from.");
+      return;
+    }
+    const ai = getAiSettings();
+    if (ai.provider === "local" || !ai.apiKey) {
+      setError("AI provider is set to Local or missing API key. Add a Gemini key in Settings.");
+      return;
+    }
+    setAiExtracting(true);
+    setError(null);
+    try {
+      // 1) AI-powered requirements extraction
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: ai.provider,
+          apiKey: ai.apiKey,
+          task: "job_extract_requirements",
+          input: { jobText: job.description },
+        }),
+      });
+      const body = await fetchJson<any>(res);
+      if (!res.ok || body?.ok === false) {
+        setError(typeof body?.error === "string" ? body.error : "AI extraction failed. Try again or paste requirements manually.");
+        setAiExtracting(false);
+        return;
+      }
+
+      const req = Array.isArray(body?.data?.required) ? body.data.required : [];
+      const pref = Array.isArray(body?.data?.preferred) ? body.data.preferred : [];
+      const resp = Array.isArray(body?.data?.responsibilities) ? body.data.responsibilities : [];
+      const keySkills = Array.isArray(body?.data?.keySkills) ? body.data.keySkills : [];
+      const notes = Array.isArray(body?.data?.notes) ? body.data.notes : [];
+      const lines: string[] = [];
+      if (req.length) lines.push("Requirements:\n- " + req.join("\n- "));
+      if (pref.length) lines.push("Preferred:\n- " + pref.join("\n- "));
+      if (resp.length) lines.push("Responsibilities:\n- " + resp.join("\n- "));
+      if (keySkills.length) lines.push("Key skills:\n- " + keySkills.join("\n- "));
+      if (notes.length) lines.push("Notes:\n- " + notes.join("\n- "));
+      const normalized = lines.join("\n\n");
+
+      if (!normalized.trim()) {
+        setError("AI returned no requirements, preferred, responsibilities, or key skills. Use \"Extract Requirements\" to paste them manually.");
+        setAiExtracting(false);
+        return;
+      }
+
+      const patch = await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parsedRequirements: normalized }),
+      });
+      const patched = await fetchJson<any>(patch);
+      if (!patch.ok) throw new Error(patched.error || "Save failed");
+
+      const r2 = await fetch(`/api/jobs/${job.id}/parse`);
+      const parsedData = await fetchJson<any>(r2);
+      if (r2.ok) setParsed(parsedData as JobPostingParsed);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI refine failed");
+    } finally {
+      setAiExtracting(false);
     }
   }
 
@@ -118,6 +190,14 @@ export default function JobDetailPage() {
               className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
             >
               Extract Requirements
+            </button>
+            <button
+              type="button"
+              onClick={aiRefineAll}
+              disabled={aiExtracting}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium"
+            >
+              {aiExtracting ? "Refining…" : "Refine with AI"}
             </button>
             {job.url && (
               <a
@@ -165,13 +245,15 @@ export default function JobDetailPage() {
         )}
       </div>
 
+      {/* Job Fit summary inline */}
+      <JobIntelligence jobId={job.id} />
+
       {/* Tabs */}
       <div className="flex flex-wrap gap-2">
         {(
           [
             ["posting", "Job Posting"],
-            ["intelligence", "Job Fit"],
-            ["tailor", "Tailor Resume"],
+            ["documents", "Tailor & Cover Letter"],
             ["applications", "Applications"],
           ] as const
         ).map(([k, label]) => (
@@ -272,8 +354,38 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      {tab === "intelligence" && <JobIntelligence jobId={job.id} />}
-      {tab === "tailor" && <ResumeTailor jobId={job.id} />}
+      {tab === "documents" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setDocMode("resume")}
+              className={
+                "px-3 py-2 rounded-lg text-sm font-semibold border " +
+                (docMode === "resume"
+                  ? "bg-emerald-700/70 border-emerald-500 text-white"
+                  : "bg-slate-900/30 border-slate-700/60 text-slate-300 hover:bg-slate-800/40")
+              }
+            >
+              Tailor my resume
+            </button>
+            <button
+              type="button"
+              onClick={() => setDocMode("cover")}
+              className={
+                "px-3 py-2 rounded-lg text-sm font-semibold border " +
+                (docMode === "cover"
+                  ? "bg-indigo-700/70 border-indigo-500 text-white"
+                  : "bg-slate-900/30 border-slate-700/60 text-slate-300 hover:bg-slate-800/40")
+              }
+            >
+              Tailor my cover letter
+            </button>
+          </div>
+          {docMode === "resume" && <ResumeTailor jobId={job.id} />}
+          {docMode === "cover" && <CoverLetterAssistant jobId={job.id} />}
+        </div>
+      )}
       {tab === "applications" && <AddApplicationRecord jobId={job.id} />}
     </div>
   );

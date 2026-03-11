@@ -9,10 +9,10 @@ import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
-function runExtract(pdfPath: string, cwd: string) {
+function runExtract(pdfPath: string) {
   return new Promise<{ text: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, ["scripts/extract-pdf-text.mjs", pdfPath], {
-      cwd,
+    const scriptPath = path.join(process.cwd(), "scripts", "extract-pdf-text.mjs");
+    const child = spawn(process.execPath, [scriptPath, pdfPath], {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -34,10 +34,10 @@ function runExtract(pdfPath: string, cwd: string) {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = await params;
+    const { id } = params;
     const form = await request.formData();
     const file = form.get("file");
     if (!file || !(file instanceof File)) {
@@ -52,8 +52,7 @@ export async function POST(
 
     let extracted = "";
     if (ext === "pdf") {
-      const cwd = process.cwd();
-      const { text } = await runExtract(filePath, cwd);
+      const { text } = await runExtract(filePath);
       extracted = text || "";
     } else {
       const { value } = await mammoth.extractRawText({ path: filePath });
@@ -64,12 +63,18 @@ export async function POST(
 
     const resume = await prisma.resume.update({
       where: { id },
-      data: { content: cleaned, filePath },
+      data: { content: cleaned },
     });
+
+    // Best-effort cleanup of temporary files; ignore failures.
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 
     return NextResponse.json({ resume, extractedChars: cleaned.length });
   } catch (e) {
-    return NextResponse.json({ error: "Replace upload failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Replace upload failed" },
+      { status: 500 }
+    );
   }
 }
 

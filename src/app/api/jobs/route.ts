@@ -2,6 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { localTextSimilarity } from "@/lib/ats/semantic";
 
+function cleanJobTitle(raw: string) {
+  let t = (raw || "").trim();
+  if (!t) return "Untitled";
+
+  const suffixes = [
+    /\s*[-–—]\s*job\s*post(ing)?$/i,
+    /\s*[-–—]\s*job\s*description$/i,
+    /\s*[-–—]\s*careers?\b.*$/i,
+    /\s*\|\s*indeed.*$/i,
+    /\s*\|\s*linkedin.*$/i,
+    /\s*\|\s*glassdoor.*$/i,
+  ];
+
+  for (const rx of suffixes) {
+    t = t.replace(rx, "").trim();
+  }
+
+  return t || "Untitled";
+}
+
 export async function GET() {
   try {
     const jobs = await prisma.job.findMany({
@@ -18,7 +38,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { title, company, url, platform, description, status, deadline } = body;
 
-    const normalizedTitle = (title || "Untitled").trim();
+    const normalizedTitle = cleanJobTitle(title || "Untitled");
     const normalizedCompany = (company || "Unknown").trim();
     const normalizedDesc = (description || "").trim();
 

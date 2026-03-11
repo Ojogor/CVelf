@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 
 const filePath = process.argv[2];
 if (!filePath) {
@@ -9,8 +9,10 @@ if (!filePath) {
 
 try {
   const buf = await fs.readFile(filePath);
-  const data = await pdfParse(buf);
-  process.stdout.write(JSON.stringify({ text: data.text || "" }));
+  const parser = new PDFParse({ data: buf });
+  const result = await parser.getText({});
+  await parser.destroy();
+  process.stdout.write(JSON.stringify({ text: result?.text || "" }));
 } catch (e) {
   process.stderr.write(String(e?.stack || e?.message || e));
   process.exit(1);
